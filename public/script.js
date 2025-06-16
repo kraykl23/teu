@@ -32,12 +32,20 @@ const channels = [
     }
 ];
 
+// OPTIMIZATION: Caching system
+const messageCache = new Map();
+const translationCache = new Map();
+const CACHE_DURATION = 6 * 60 * 1000; // 6 minutes cache
+const TRANSLATION_CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours for translations
+const MAX_CACHE_SIZE = 100; // Prevent memory issues
+
 // Translation state for each channel
 const channelTranslationState = {};
 
-// SECURITY: Rate limiting for client-side requests
+// OPTIMIZATION: Reduced rate limiting for better performance
 const rateLimitTracker = {
     requests: [],
+    maxRequests: 20, // Reduced from 30
     isAllowed() {
         const now = Date.now();
         const oneMinuteAgo = now - 60000;
@@ -45,8 +53,8 @@ const rateLimitTracker = {
         // Clean old requests
         this.requests = this.requests.filter(time => time > oneMinuteAgo);
         
-        // Check if under limit (30 requests per minute)
-        if (this.requests.length >= 30) {
+        // Check if under limit
+        if (this.requests.length >= this.maxRequests) {
             return false;
         }
         
@@ -54,6 +62,39 @@ const rateLimitTracker = {
         return true;
     }
 };
+
+// OPTIMIZATION: Cache management
+function cleanupCache() {
+    const now = Date.now();
+    
+    // Clean message cache
+    for (const [key, value] of messageCache.entries()) {
+        if (now - value.timestamp > CACHE_DURATION) {
+            messageCache.delete(key);
+        }
+    }
+    
+    // Clean translation cache
+    for (const [key, value] of translationCache.entries()) {
+        if (now - value.timestamp > TRANSLATION_CACHE_DURATION) {
+            translationCache.delete(key);
+        }
+    }
+    
+    // Limit cache size
+    if (messageCache.size > MAX_CACHE_SIZE) {
+        const oldestKeys = Array.from(messageCache.keys()).slice(0, messageCache.size - MAX_CACHE_SIZE);
+        oldestKeys.forEach(key => messageCache.delete(key));
+    }
+    
+    if (translationCache.size > MAX_CACHE_SIZE) {
+        const oldestKeys = Array.from(translationCache.keys()).slice(0, translationCache.size - MAX_CACHE_SIZE);
+        oldestKeys.forEach(key => translationCache.delete(key));
+    }
+}
+
+// Run cache cleanup every 10 minutes
+setInterval(cleanupCache, 10 * 60 * 1000);
 
 // SECURITY: Input validation
 function validateChannelUsername(username) {
@@ -141,15 +182,38 @@ function handleError(error, context = '') {
     return sanitizedError;
 }
 
-async function fetchChannelMessages(channelUsername, containerId) {
+// OPTIMIZATION: Check if cache is fresh
+function isCacheFresh(cacheEntry, duration = CACHE_DURATION) {
+    return cacheEntry && (Date.now() - cacheEntry.timestamp < duration);
+}
+
+// OPTIMIZATION: Update cache indicators
+function updateCacheIndicator(containerId, isFromCache) {
+    const wrapper = document.querySelector(`#${containerId}`).closest('.channel-wrapper');
+    if (!wrapper) return;
+    
+    let cacheIndicator = wrapper.querySelector('.cache-indicator');
+    if (!cacheIndicator) {
+        cacheIndicator = document.createElement('span');
+        cacheIndicator.className = 'cache-indicator';
+        const refreshInfo = wrapper.querySelector('.refresh-info');
+        if (refreshInfo) {
+            refreshInfo.appendChild(cacheIndicator);
+        }
+    }
+    
+    if (isFromCache) {
+        cacheIndicator.textContent = ' (cached)';
+        cacheIndicator.style.opacity = '0.7';
+    } else {
+        cacheIndicator.textContent = '';
+    }
+}
+
+async function fetchChannelMessages(channelUsername, containerId, forceRefresh = false) {
     // SECURITY: Validate inputs
     if (!validateChannelUsername(channelUsername)) {
         console.error('Invalid channel username:', channelUsername);
-        return;
-    }
-    
-    if (!rateLimitTracker.isAllowed()) {
-        console.warn('Rate limit exceeded');
         return;
     }
     
@@ -159,8 +223,38 @@ async function fetchChannelMessages(channelUsername, containerId) {
         return;
     }
     
+    // OPTIMIZATION: Check cache first
+    const cacheKey = channelUsername;
+    const cached = messageCache.get(cacheKey);
+    
+    if (!forceRefresh && isCacheFresh(cached)) {
+        console.log(`📋 Using cached data for @${channelUsername}`);
+        
+        // Store cached messages
+        window[`${channelUsername}_messages`] = cached.data;
+        
+        // Display cached messages
+        displayMessages(cached.data, container, channelUsername);
+        
+        // Update refresh time with cache indicator
+        updateLastRefresh(containerId);
+        updateCacheIndicator(containerId, true);
+        return;
+    }
+    
+    // OPTIMIZATION: Rate limiting check
+    if (!rateLimitTracker.isAllowed()) {
+        console.warn('Rate limit exceeded, using cache if available');
+        if (cached) {
+            window[`${channelUsername}_messages`] = cached.data;
+            displayMessages(cached.data, container, channelUsername);
+            updateCacheIndicator(containerId, true);
+        }
+        return;
+    }
+    
     try {
-        console.log(`Fetching messages for @${channelUsername}...`);
+        console.log(`🔄 Fetching fresh data for @${channelUsername}...`);
         
         // Show loading state
         safeSetInnerHTML(container, '<div class="loading"><div class="spinner"></div><p>Loading messages...</p></div>');
@@ -203,6 +297,12 @@ async function fetchChannelMessages(channelUsername, containerId) {
             dateISO: new Date(msg.dateISO).toISOString() // Validate date
         })).filter(msg => msg.text.length > 0);
         
+        // OPTIMIZATION: Cache the results
+        messageCache.set(cacheKey, {
+            data: sanitizedMessages,
+            timestamp: Date.now()
+        });
+        
         // Store sanitized messages
         window[`${channelUsername}_messages`] = sanitizedMessages;
         
@@ -211,17 +311,27 @@ async function fetchChannelMessages(channelUsername, containerId) {
         
         // Update last refresh time
         updateLastRefresh(containerId);
+        updateCacheIndicator(containerId, false);
         
     } catch (error) {
         const errorMessage = handleError(error, 'fetchChannelMessages');
         console.error(`Error fetching ${channelUsername}:`, error);
+        
+        // OPTIMIZATION: Fallback to cache on error
+        if (cached) {
+            console.log(`📋 Falling back to cached data for @${channelUsername}`);
+            window[`${channelUsername}_messages`] = cached.data;
+            displayMessages(cached.data, container, channelUsername);
+            updateCacheIndicator(containerId, true);
+            return;
+        }
         
         const errorHtml = `
             <div class="error-message">
                 <div class="error-icon">⚠️</div>
                 <p class="error-title">Failed to load @${escapeHtml(channelUsername)}</p>
                 <p class="error-details">${escapeHtml(errorMessage)}</p>
-                <button onclick="fetchChannelMessages('${escapeHtml(channelUsername)}', '${escapeHtml(containerId)}')" class="retry-btn">
+                <button onclick="fetchChannelMessages('${escapeHtml(channelUsername)}', '${escapeHtml(containerId)}', true)" class="retry-btn">
                     🔄 Try Again
                 </button>
             </div>
@@ -519,8 +629,8 @@ async function translateMessages(messages, targetLang = 'en') {
             } else {
                 translations.push('');
             }
-            // Small delay to avoid rate limiting
-            await new Promise(resolve => setTimeout(resolve, 100));
+            // OPTIMIZATION: Longer delay to reduce API load
+            await new Promise(resolve => setTimeout(resolve, 200));
         } catch (error) {
             console.error('Error translating message:', error);
             translations.push(message.text || ''); // Fallback to original
@@ -543,6 +653,15 @@ async function translateText(text, targetLang = 'en') {
     // SECURITY: Limit text length
     const maxLength = 5000;
     const textToTranslate = text.length > maxLength ? text.substring(0, maxLength) + '...' : text;
+    
+    // OPTIMIZATION: Check translation cache
+    const cacheKey = `${textToTranslate}-${targetLang}`;
+    const cached = translationCache.get(cacheKey);
+    
+    if (isCacheFresh(cached, TRANSLATION_CACHE_DURATION)) {
+        console.log('📋 Using cached translation');
+        return cached.data;
+    }
     
     try {
         // Using Google Translate API through a proxy service
@@ -567,6 +686,12 @@ async function translateText(text, targetLang = 'en') {
                 .filter(item => Array.isArray(item) && item[0])
                 .map(item => item[0])
                 .join('');
+            
+            // OPTIMIZATION: Cache the translation
+            translationCache.set(cacheKey, {
+                data: translatedText || textToTranslate,
+                timestamp: Date.now()
+            });
             
             return translatedText || textToTranslate;
         }
@@ -602,13 +727,14 @@ function updateLastRefresh(containerId) {
     refreshInfo.textContent = `Updated: ${now.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`;
 }
 
-// Auto-refresh functionality
+// OPTIMIZATION: Auto-refresh functionality with longer intervals
 let refreshInterval;
 let isRefreshing = false;
 
 function startAutoRefresh() {
     if (refreshInterval) clearInterval(refreshInterval);
     
+    // OPTIMIZATION: Increased interval from 4 to 8 minutes
     refreshInterval = setInterval(async () => {
         if (isRefreshing || document.hidden) return;
         
@@ -619,7 +745,8 @@ function startAutoRefresh() {
             for (const channel of channels) {
                 if (validateChannelUsername(channel.username)) {
                     await fetchChannelMessages(channel.username, channel.container);
-                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    // OPTIMIZATION: Longer delay between requests
+                    await new Promise(resolve => setTimeout(resolve, 2000));
                 }
             }
         } catch (error) {
@@ -627,7 +754,7 @@ function startAutoRefresh() {
         } finally {
             isRefreshing = false;
         }
-    }, 4 * 60 * 1000); // Every 4 minutes
+    }, 8 * 60 * 1000); // Every 8 minutes instead of 4
 }
 
 function stopAutoRefresh() {
@@ -637,7 +764,7 @@ function stopAutoRefresh() {
     }
 }
 
-async function refreshAll() {
+async function refreshAll(forceRefresh = false) {
     if (isRefreshing) return;
     
     const refreshBtn = document.getElementById('refresh-all-btn');
@@ -651,8 +778,9 @@ async function refreshAll() {
     try {
         for (const channel of channels) {
             if (validateChannelUsername(channel.username)) {
-                await fetchChannelMessages(channel.username, channel.container);
-                await new Promise(resolve => setTimeout(resolve, 800));
+                await fetchChannelMessages(channel.username, channel.container, forceRefresh);
+                // OPTIMIZATION: Longer delay between requests
+                await new Promise(resolve => setTimeout(resolve, 1500));
             }
         }
     } catch (error) {
@@ -678,7 +806,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         for (const channel of channels) {
             if (validateChannelUsername(channel.username)) {
                 await fetchChannelMessages(channel.username, channel.container);
-                await new Promise(resolve => setTimeout(resolve, 600));
+                // OPTIMIZATION: Longer delay during initialization
+                await new Promise(resolve => setTimeout(resolve, 1000));
             }
         }
     } catch (error) {
@@ -738,7 +867,7 @@ document.addEventListener('touchend', (e) => {
     const pullDistance = currentY - startY;
     
     if (pullDistance > 100 && !isRefreshing) {
-        refreshAll();
+        refreshAll(true); // Force refresh on manual pull
     }
 });
 
