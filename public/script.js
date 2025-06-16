@@ -126,6 +126,20 @@ function displayMessages(messages, container, channelUsername) {
     }).join('');
 }
 
+// Handle channel-level translation dropdown
+function toggleChannelTranslateOptions(button) {
+    const dropdown = button.closest('.channel-translate-dropdown');
+    const options = dropdown.querySelector('.channel-translate-options');
+    
+    // Close all other channel dropdowns
+    document.querySelectorAll('.channel-translate-options.show').forEach(opt => {
+        if (opt !== options) opt.classList.remove('show');
+    });
+    
+    options.classList.toggle('show');
+}
+
+// Handle individual message translation dropdown
 function toggleTranslateOptions(button) {
     const dropdown = button.closest('.translate-dropdown');
     const options = dropdown.querySelector('.translate-options');
@@ -140,8 +154,8 @@ function toggleTranslateOptions(button) {
 
 // Close dropdowns when clicking outside
 document.addEventListener('click', (e) => {
-    if (!e.target.closest('.translate-dropdown')) {
-        document.querySelectorAll('.translate-options.show').forEach(opt => {
+    if (!e.target.closest('.translate-dropdown') && !e.target.closest('.channel-translate-dropdown')) {
+        document.querySelectorAll('.translate-options.show, .channel-translate-options.show').forEach(opt => {
             opt.classList.remove('show');
         });
     }
@@ -153,6 +167,12 @@ async function translateChannelMessages(channelUsername, button, targetLang = 'e
     
     if (!messages) return;
     
+    // Close dropdown
+    const dropdown = button.closest('.channel-translate-dropdown');
+    const options = dropdown.querySelector('.channel-translate-options');
+    options.classList.remove('show');
+    
+    const mainButton = dropdown.querySelector('.translate-channel-btn');
     const currentState = channelTranslationState[channelUsername];
     
     if (currentState && currentState.lang === targetLang) {
@@ -160,14 +180,14 @@ async function translateChannelMessages(channelUsername, button, targetLang = 'e
         channelTranslationState[channelUsername] = null;
         container.querySelectorAll('.original-text').forEach(el => el.classList.remove('hidden'));
         container.querySelectorAll('.translated-text').forEach(el => el.classList.add('hidden'));
-        button.innerHTML = `🌐 Translate All`;
-        button.classList.remove('translated');
+        mainButton.innerHTML = `🌐 Translate All`;
+        mainButton.classList.remove('translated');
         return;
     }
     
     // Start translation
-    button.innerHTML = '🔄 Translating...';
-    button.disabled = true;
+    mainButton.innerHTML = '🔄 Translating...';
+    mainButton.disabled = true;
     
     try {
         const translatedMessages = await translateMessages(messages, targetLang);
@@ -189,18 +209,18 @@ async function translateChannelMessages(channelUsername, button, targetLang = 'e
         const langCode = targetLang.toUpperCase();
         
         channelTranslationState[channelUsername] = { lang: targetLang };
-        button.innerHTML = `🔤 Show Original`;
-        button.classList.add('translated');
+        mainButton.innerHTML = `🔤 Show Original`;
+        mainButton.classList.add('translated');
         
     } catch (error) {
         console.error('Translation error:', error);
-        button.innerHTML = '❌ Translation Failed';
+        mainButton.innerHTML = '❌ Translation Failed';
         setTimeout(() => {
-            button.innerHTML = '🌐 Translate All';
-            button.disabled = false;
+            mainButton.innerHTML = '🌐 Translate All';
+            mainButton.disabled = false;
         }, 2000);
     } finally {
-        button.disabled = false;
+        mainButton.disabled = false;
     }
 }
 
