@@ -83,21 +83,12 @@ function parseChannelMessages(html, channelUsername) {
                 continue;
             }
             
-            // Extract date/time
+            // Extract date/time and return ISO string for client-side formatting
             const dateMatch = messageHtml.match(/<time[^>]*datetime="([^"]*)"[^>]*>/);
             let dateStr = new Date().toISOString();
-            let displayDate = 'Recently';
             
             if (dateMatch) {
                 dateStr = dateMatch[1];
-                const date = new Date(dateStr);
-                displayDate = date.toLocaleString('en-US', {
-                    month: 'short',
-                    day: 'numeric',
-                    hour: '2-digit',
-                    minute: '2-digit',
-                    hour12: true
-                });
             }
             
             // Extract message ID
@@ -107,7 +98,7 @@ function parseChannelMessages(html, channelUsername) {
             messages.push({
                 id: messageId,
                 text: messageText,
-                date: displayDate,
+                dateISO: dateStr, // Send ISO string for client-side formatting
                 timestamp: new Date(dateStr).getTime(),
                 channel: channelUsername,
                 url: `https://t.me/${channelUsername}/${messageId}`
