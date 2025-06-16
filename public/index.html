@@ -2,99 +2,137 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>Israel News Feed</title>
     <link rel="stylesheet" href="style.css">
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📰</text></svg>">
+    <meta name="theme-color" content="#667eea">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-title" content="Israel News">
 </head>
 <body>
-    <!-- Google Translate Widget -->
-    <div id="google_translate_element"></div>
-
-    <header>
-        <h1>🇮🇱 Israel News Feed</h1>
-        <p class="subtitle">Live updates from Telegram channels</p>
-        <div class="controls">
-            <button id="refresh-all-btn" onclick="refreshAll()">🔄 Refresh All</button>
-            <span class="auto-refresh-info">Auto-refreshes every 3 minutes</span>
+    <!-- Mobile-first header -->
+    <header class="mobile-header">
+        <div class="header-content">
+            <h1>🇮🇱 Israel News</h1>
+            <p class="subtitle">Live from Telegram</p>
+        </div>
+        
+        <div class="header-controls">
+            <button id="refresh-all-btn" onclick="refreshAll()" class="refresh-btn">
+                🔄 Refresh All
+            </button>
+        </div>
+        
+        <div class="pull-refresh-hint">
+            <span>Pull down to refresh</span>
         </div>
     </header>
 
     <main class="channels-container">
-        <!-- Breach Detector -->
-        <div class="channel-wrapper">
-            <h2>🔍 Breach Detector</h2>
-            <div id="breachdetector-container" class="announcements-container">
-                <p class="loading">Loading messages...</p>
-            </div>
-        </div>
-
         <!-- MBS Rsi98 -->
         <div class="channel-wrapper">
-            <h2>📊 MBS Rsi98</h2>
+            <div class="channel-header">
+                <h2>📊 MBS Rsi98</h2>
+                <div class="channel-actions">
+                    <button onclick="translateChannelMessages('MBSRsi98', this)" class="translate-channel-btn">
+                        🌐 Translate All
+                    </button>
+                    <span class="refresh-info"></span>
+                </div>
+            </div>
             <div id="mbsrsi98-container" class="announcements-container">
-                <p class="loading">Loading messages...</p>
+                <div class="loading"><div class="spinner"></div><p>Loading...</p></div>
             </div>
         </div>
 
         <!-- N12 Chat -->
         <div class="channel-wrapper">
-            <h2>📺 N12 Chat</h2>
+            <div class="channel-header">
+                <h2>📺 N12 Chat</h2>
+                <div class="channel-actions">
+                    <button onclick="translateChannelMessages('N12chat', this)" class="translate-channel-btn">
+                        🌐 Translate All
+                    </button>
+                    <span class="refresh-info"></span>
+                </div>
+            </div>
             <div id="n12chat-container" class="announcements-container">
-                <p class="loading">Loading messages...</p>
+                <div class="loading"><div class="spinner"></div><p>Loading...</p></div>
             </div>
         </div>
 
         <!-- News IL 2022 -->
         <div class="channel-wrapper">
-            <h2>📰 News IL 2022</h2>
+            <div class="channel-header">
+                <h2>📰 News IL 2022</h2>
+                <div class="channel-actions">
+                    <button onclick="translateChannelMessages('newsil2022', this)" class="translate-channel-btn">
+                        🌐 Translate All
+                    </button>
+                    <span class="refresh-info"></span>
+                </div>
+            </div>
             <div id="newsil2022-container" class="announcements-container">
-                <p class="loading">Loading messages...</p>
+                <div class="loading"><div class="spinner"></div><p>Loading...</p></div>
             </div>
         </div>
 
         <!-- Kodkod News IL -->
         <div class="channel-wrapper">
-            <h2>🏛️ Kodkod News IL</h2>
+            <div class="channel-header">
+                <h2>🏛️ Kodkod News IL</h2>
+                <div class="channel-actions">
+                    <button onclick="translateChannelMessages('kodkod_news_il', this)" class="translate-channel-btn">
+                        🌐 Translate All
+                    </button>
+                    <span class="refresh-info"></span>
+                </div>
+            </div>
             <div id="kodkod-container" class="announcements-container">
-                <p class="loading">Loading messages...</p>
+                <div class="loading"><div class="spinner"></div><p>Loading...</p></div>
             </div>
         </div>
 
         <!-- Real Time Security -->
         <div class="channel-wrapper">
-            <h2>🛡️ Real Time Security</h2>
+            <div class="channel-header">
+                <h2>🛡️ Real Time Security</h2>
+                <div class="channel-actions">
+                    <button onclick="translateChannelMessages('Realtimesecurity1', this)" class="translate-channel-btn">
+                        🌐 Translate All
+                    </button>
+                    <span class="refresh-info"></span>
+                </div>
+            </div>
             <div id="realtimesecurity-container" class="announcements-container">
-                <p class="loading">Loading messages...</p>
+                <div class="loading"><div class="spinner"></div><p>Loading...</p></div>
             </div>
         </div>
 
         <!-- Abu Ali Express -->
         <div class="channel-wrapper">
-            <h2>⚡ Abu Ali Express</h2>
+            <div class="channel-header">
+                <h2>⚡ Abu Ali Express</h2>
+                <div class="channel-actions">
+                    <button onclick="translateChannelMessages('abualiexpress', this)" class="translate-channel-btn">
+                        🌐 Translate All
+                    </button>
+                    <span class="refresh-info"></span>
+                </div>
+            </div>
             <div id="abuali-container" class="announcements-container">
-                <p class="loading">Loading messages...</p>
+                <div class="loading"><div class="spinner"></div><p>Loading...</p></div>
             </div>
         </div>
     </main>
 
-    <footer>
-        <p>📡 Scraping public Telegram channels • No permissions required • Auto-refreshed</p>
+    <footer class="mobile-footer">
+        <p>📡 Auto-refreshes every 4 minutes</p>
+        <p>Pull down from top to refresh manually</p>
     </footer>
 
     <script src="script.js"></script>
-
-    <!-- Google Translate Script -->
-    <script type="text/javascript">
-    function googleTranslateElementInit() {
-        new google.translate.TranslateElement({
-            pageLanguage: 'en',
-            includedLanguages: 'en,he,ar,ru,es,fr',
-            layout: google.translate.TranslateElement.InlineLayout.SIMPLE,
-            autoDisplay: false
-        }, 'google_translate_element');
-    }
-    </script>
-    <script type="text/javascript" src="//translate.google.com/translate_a/element.js?cb=googleTranslateElementInit"></script>
 </body>
 </html>
