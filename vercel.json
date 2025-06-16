@@ -1,0 +1,19 @@
+{
+  "version": 2,
+  "functions": {
+    "api/fetch-telegram.js": {
+      "memory": 128,
+      "maxDuration": 10
+    }
+  },
+  "routes": [
+    {
+      "src": "/api/(.*)",
+      "dest": "/api/fetch-telegram"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/public/$1"
+    }
+  ]
+}
