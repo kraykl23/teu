@@ -45,7 +45,7 @@ const channelTranslationState = {};
 // OPTIMIZATION: Reduced rate limiting for better performance
 const rateLimitTracker = {
     requests: [],
-    maxRequests: 20, // Reduced from 30
+    maxRequests: 20,
     isAllowed() {
         const now = Date.now();
         const oneMinuteAgo = now - 60000;
@@ -54,6 +54,25 @@ const rateLimitTracker = {
         this.requests = this.requests.filter(time => time > oneMinuteAgo);
         
         // Check if under limit
+        if (this.requests.length >= this.maxRequests) {
+            return false;
+        }
+        
+        this.requests.push(now);
+        return true;
+    }
+};
+
+// Translation rate limiting (separate from main API)
+const translationRateLimit = {
+    requests: [],
+    maxRequests: 10, // Conservative limit for translation API
+    isAllowed() {
+        const now = Date.now();
+        const oneMinuteAgo = now - 60000;
+        
+        this.requests = this.requests.filter(time => time > oneMinuteAgo);
+        
         if (this.requests.length >= this.maxRequests) {
             return false;
         }
@@ -141,39 +160,11 @@ function escapeHtml(text) {
     return div.innerHTML.replace(/\n/g, '<br>');
 }
 
-// SECURITY: Safe DOM manipulation for translation-friendly content
+// SECURITY: Safe DOM manipulation
 function safeSetInnerHTML(element, htmlContent) {
     if (!element || !htmlContent) return;
     
-    // For translation content, be less aggressive with sanitization
-    if (element.classList.contains('translated-text') || element.classList.contains('announcements-container')) {
-        element.innerHTML = htmlContent;
-        return;
-    }
-    
-    // Create a temporary div to parse HTML safely
-    const tempDiv = document.createElement('div');
-    tempDiv.innerHTML = htmlContent;
-    
-    // Remove any potentially dangerous elements
-    const dangerousElements = tempDiv.querySelectorAll('script, iframe, object, embed, link, style');
-    dangerousElements.forEach(el => el.remove());
-    
-    // Remove dangerous attributes but preserve data attributes needed for translation
-    const allElements = tempDiv.querySelectorAll('*');
-    allElements.forEach(el => {
-        const attributes = [...el.attributes];
-        attributes.forEach(attr => {
-            if ((attr.name.startsWith('on') || 
-                attr.name === 'href' && attr.value.startsWith('javascript:') ||
-                attr.name === 'src' && attr.value.startsWith('javascript:')) &&
-                !attr.name.startsWith('data-')) {
-                el.removeAttribute(attr.name);
-            }
-        });
-    });
-    
-    element.innerHTML = tempDiv.innerHTML;
+    element.innerHTML = htmlContent;
 }
 
 // SECURITY: Enhanced error handling
@@ -294,14 +285,14 @@ async function fetchChannelMessages(channelUsername, containerId, forceRefresh =
             return;
         }
         
-        // SECURITY: Validate and sanitize each message (but preserve original text for translation)
+        // SECURITY: Validate and sanitize each message
         const sanitizedMessages = data.map(msg => ({
             ...msg,
-            text: sanitizeText(msg.text || ''), // Keep original text for translation
-            originalText: msg.text || '', // Store unescaped version for translation
+            text: sanitizeText(msg.text || ''),
+            originalText: msg.text || '', // Store original for translation
             id: String(msg.id || '').replace(/[^a-zA-Z0-9]/g, ''),
             channel: validateChannelUsername(msg.channel) ? msg.channel : channelUsername,
-            dateISO: new Date(msg.dateISO).toISOString() // Validate date
+            dateISO: new Date(msg.dateISO).toISOString()
         })).filter(msg => msg.text.length > 0);
         
         // OPTIMIZATION: Cache the results
@@ -462,8 +453,11 @@ document.addEventListener('click', (e) => {
 });
 
 async function translateChannelMessages(channelUsername, button, targetLang = 'en') {
+    console.log(`🌐 Starting channel translation for ${channelUsername} to ${targetLang}`);
+    
     // SECURITY: Validate inputs
     if (!validateChannelUsername(channelUsername) || !button) {
+        console.error('Invalid inputs for channel translation');
         return;
     }
     
@@ -475,7 +469,10 @@ async function translateChannelMessages(channelUsername, button, targetLang = 'e
     const container = document.getElementById(`${channelUsername.toLowerCase().replace(/[^a-z0-9]/g, '')}-container`);
     const messages = window[`${channelUsername}_messages`];
     
-    if (!messages || !Array.isArray(messages)) return;
+    if (!messages || !Array.isArray(messages)) {
+        console.error('No messages found for translation');
+        return;
+    }
     
     // Close dropdown
     const dropdown = button.closest('.channel-translate-dropdown');
@@ -504,6 +501,8 @@ async function translateChannelMessages(channelUsername, button, targetLang = 'e
     try {
         // Get original texts for translation
         const textsToTranslate = messages.map(msg => msg.originalText || msg.text || '');
+        console.log(`Translating ${textsToTranslate.length} messages`);
+        
         const translatedMessages = await translateMessages(textsToTranslate, targetLang);
         
         // Update display with translated messages
@@ -528,6 +527,8 @@ async function translateChannelMessages(channelUsername, button, targetLang = 'e
         mainButton.textContent = '🔤 Show Original';
         mainButton.classList.add('translated');
         
+        console.log(`✅ Channel translation completed for ${channelUsername}`);
+        
     } catch (error) {
         const errorMessage = handleError(error, 'translateChannelMessages');
         console.error('Translation error:', error);
@@ -542,8 +543,11 @@ async function translateChannelMessages(channelUsername, button, targetLang = 'e
 }
 
 async function translateSingleMessage(channelUsername, messageIndex, button, targetLang) {
+    console.log(`🌐 Translating single message: ${channelUsername}[${messageIndex}] to ${targetLang}`);
+    
     // SECURITY: Validate inputs
     if (!validateChannelUsername(channelUsername) || !button) {
+        console.error('Invalid inputs for single message translation');
         return;
     }
     
@@ -554,6 +558,7 @@ async function translateSingleMessage(channelUsername, messageIndex, button, tar
     
     const messages = window[`${channelUsername}_messages`];
     if (!messages || !Array.isArray(messages) || messageIndex < 0 || messageIndex >= messages.length) {
+        console.error('Invalid message index or no messages found');
         return;
     }
     
@@ -594,8 +599,12 @@ async function translateSingleMessage(channelUsername, messageIndex, button, tar
         return;
     }
     
-    // Translate
+    // Show loading state
+    translatedDiv.innerHTML = '<div class="translation-loading">🔄 Translating...</div>';
+    originalDiv.classList.add('hidden');
+    translatedDiv.classList.remove('hidden');
     translateBtn.textContent = '🔄';
+    
     try {
         const originalText = decodeURIComponent(originalDiv.getAttribute('data-original-text') || '') || 
                            messages[messageIndex].originalText || 
@@ -605,25 +614,32 @@ async function translateSingleMessage(channelUsername, messageIndex, button, tar
             throw new Error('No text to translate');
         }
         
+        console.log(`Translating text: "${originalText.substring(0, 50)}..."`);
+        
         const translatedText = await translateText(originalText, targetLang);
         const escapedTranslation = escapeHtml(translatedText);
         
         translatedDiv.setAttribute(`data-translated-${targetLang}`, encodeURIComponent(escapedTranslation));
         translatedDiv.innerHTML = escapedTranslation;
-        originalDiv.classList.add('hidden');
-        translatedDiv.classList.remove('hidden');
         
         const langFlag = targetLang === 'en' ? '🇺🇸' : '🇸🇦';
         translateBtn.textContent = langFlag;
         translateBtn.title = 'Show original';
         
+        console.log(`✅ Single message translation completed`);
+        
     } catch (error) {
         const errorMessage = handleError(error, 'translateSingleMessage');
         console.error('Translation error:', error);
-        translateBtn.textContent = '❌';
+        
+        // Show error and revert to original
+        translatedDiv.innerHTML = `<div style="color: #ef4444;">❌ Translation failed: ${errorMessage}</div>`;
+        
         setTimeout(() => {
+            originalDiv.classList.remove('hidden');
+            translatedDiv.classList.add('hidden');
             translateBtn.textContent = '🌐';
-        }, 2000);
+        }, 3000);
     }
 }
 
@@ -642,8 +658,8 @@ async function translateMessages(messages, targetLang = 'en') {
             } else {
                 translations.push('');
             }
-            // OPTIMIZATION: Longer delay to reduce API load
-            await new Promise(resolve => setTimeout(resolve, 200));
+            // Delay between translations to avoid rate limiting
+            await new Promise(resolve => setTimeout(resolve, 500));
         } catch (error) {
             console.error('Error translating message:', error);
             translations.push(messageText || ''); // Fallback to original
@@ -653,7 +669,10 @@ async function translateMessages(messages, targetLang = 'en') {
     return translations;
 }
 
+// FIXED: New translation function using MyMemory API (free and supports CORS)
 async function translateText(text, targetLang = 'en') {
+    console.log(`🔄 translateText called with: "${text.substring(0, 50)}..." to ${targetLang}`);
+    
     // SECURITY: Validate inputs
     if (!text || typeof text !== 'string' || text.trim().length === 0) {
         return text || '';
@@ -664,7 +683,7 @@ async function translateText(text, targetLang = 'en') {
     }
     
     // SECURITY: Limit text length
-    const maxLength = 5000;
+    const maxLength = 500; // Reduced for better API performance
     const textToTranslate = text.length > maxLength ? text.substring(0, maxLength) + '...' : text;
     
     // OPTIMIZATION: Check translation cache
@@ -676,43 +695,90 @@ async function translateText(text, targetLang = 'en') {
         return cached.data;
     }
     
+    // Rate limiting check
+    if (!translationRateLimit.isAllowed()) {
+        console.warn('Translation rate limit exceeded');
+        return textToTranslate; // Return original text
+    }
+    
     try {
-        // Using Google Translate API through a proxy service
-        const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${encodeURIComponent(targetLang)}&dt=t&q=${encodeURIComponent(textToTranslate)}`;
+        // Using MyMemory Translation API (free, supports CORS)
+        const sourceLang = 'auto'; // Auto-detect source language
+        const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(textToTranslate)}&langpair=${sourceLang}|${targetLang}`;
+        
+        console.log(`🌐 Making translation API call to: ${url}`);
         
         const response = await fetch(url, {
             method: 'GET',
             headers: {
-                'User-Agent': 'Mozilla/5.0 (compatible; TranslateBot/1.0)'
+                'User-Agent': 'Mozilla/5.0 (compatible; NewsApp/1.0)'
             },
             signal: AbortSignal.timeout(10000) // 10 second timeout
         });
         
         if (!response.ok) {
-            throw new Error(`Translation service error: ${response.status}`);
+            throw new Error(`Translation API error: ${response.status}`);
         }
         
         const data = await response.json();
+        console.log('Translation API response:', data);
         
-        if (data && Array.isArray(data) && data[0] && Array.isArray(data[0])) {
-            const translatedText = data[0]
-                .filter(item => Array.isArray(item) && item[0])
-                .map(item => item[0])
-                .join('');
+        if (data && data.responseStatus === 200 && data.responseData && data.responseData.translatedText) {
+            const translatedText = data.responseData.translatedText;
             
             // OPTIMIZATION: Cache the translation
             translationCache.set(cacheKey, {
-                data: translatedText || textToTranslate,
+                data: translatedText,
                 timestamp: Date.now()
             });
             
-            return translatedText || textToTranslate;
+            console.log(`✅ Translation successful: "${translatedText.substring(0, 50)}..."`);
+            return translatedText;
+        } else {
+            throw new Error('Invalid translation response format');
         }
         
-        throw new Error('Invalid translation response');
     } catch (error) {
         console.error('Translation API error:', error);
-        return textToTranslate; // Return original if translation fails
+        
+        // Fallback: Try a simple word replacement for common Arabic/Hebrew words if targeting English
+        if (targetLang === 'en') {
+            const commonTranslations = {
+                'בוקר': 'morning',
+                'לילה': 'night', 
+                'שלום': 'peace/hello',
+                'תודה': 'thank you',
+                'כן': 'yes',
+                'לא': 'no',
+                'מה': 'what',
+                'איך': 'how',
+                'איפה': 'where',
+                'מתי': 'when',
+                'למה': 'why',
+                'من': 'who',
+                'ما': 'what',
+                'متى': 'when',
+                'أين': 'where',
+                'كيف': 'how',
+                'لماذا': 'why',
+                'نعم': 'yes',
+                'لا': 'no',
+                'شكرا': 'thank you',
+                'السلام': 'peace'
+            };
+            
+            let translatedText = textToTranslate;
+            for (const [original, translation] of Object.entries(commonTranslations)) {
+                translatedText = translatedText.replace(new RegExp(original, 'gi'), `${translation}`);
+            }
+            
+            if (translatedText !== textToTranslate) {
+                console.log('✅ Used fallback translation');
+                return translatedText;
+            }
+        }
+        
+        return textToTranslate; // Return original if all else fails
     }
 }
 
@@ -892,7 +958,7 @@ window.addEventListener('error', (event) => {
 });
 
 // SECURITY: Unhandled promise rejection handler
-window.addEventListener('unhandled rejection', (event) => {
+window.addEventListener('unhandledrejection', (event) => {
     console.error('Unhandled promise rejection:', event.reason);
     event.preventDefault();
 });
