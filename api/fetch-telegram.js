@@ -1,10 +1,8 @@
-// Whitelist of allowed channels - SECURITY IMPROVEMENT
 const ALLOWED_CHANNELS = [
     'MBSRsi98', 'N12chat', 'newsil2022', 
     'kodkod_news_il', 'Realtimesecurity1', 'abualiexpress'
 ];
 
-// Rate limiting store (in production, use Redis)
 const rateLimitStore = new Map();
 
 export default async function handler(request, response) {
@@ -30,7 +28,6 @@ export default async function handler(request, response) {
         return response.status(405).json({ error: 'Method not allowed' });
     }
 
-    // SECURITY: Rate limiting
     const clientIP = request.headers['x-forwarded-for'] || request.connection.remoteAddress;
     const now = Date.now();
     const rateLimit = rateLimitStore.get(clientIP) || { count: 0, resetTime: now };
@@ -47,18 +44,15 @@ export default async function handler(request, response) {
     rateLimit.count++;
     rateLimitStore.set(clientIP, rateLimit);
 
-    // SECURITY: Input validation
     const channelUsername = request.query.channel;
     if (!channelUsername) {
         return response.status(400).json({ error: 'Channel required' });
     }
 
-    // SECURITY: Whitelist validation
     if (!ALLOWED_CHANNELS.includes(channelUsername)) {
         return response.status(403).json({ error: 'Channel not allowed' });
     }
 
-    // SECURITY: Input sanitization
     const sanitizedChannel = channelUsername.replace(/[^a-zA-Z0-9_]/g, '');
     if (sanitizedChannel !== channelUsername) {
         return response.status(400).json({ error: 'Invalid channel format' });
