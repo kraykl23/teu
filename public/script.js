@@ -1,66 +1,80 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Israel News Feed</title>
-    <link rel="stylesheet" href="style.css">
-</head>
-<body>
-    <!-- Optional: Google Translate Widget -->
-    <div id="google_translate_element" style="text-align: right; padding: 10px;"></div>
-
-    <h1>Israel News Feed</h1>
-    <p class="subtitle">Live updates from Telegram</p>
-
-    <!-- Channel: N12 Chat -->
-    <div class="channel-wrapper">
-        <h2>N12 Chat</h2>
-        <div id="n12chat-container" class="announcements-container">
-            <p class="loading">Loading messages...</p>
-        </div>
-    </div>
-
-    <!-- Channel: Kodkod News -->
-    <div class="channel-wrapper">
-        <h2>Kodkod News IL</h2>
-        <div id="kodkod-container" class="announcements-container">
-            <p class="loading">Loading messages...</p>
-        </div>
-    </div>
-
-    <!-- Channel: Abu Ali Express -->
-    <div class="channel-wrapper">
-        <h2>Abu Ali Express</h2>
-        <div id="abuali-container" class="announcements-container">
-            <p class="loading">Loading messages...</p>
-        </div>
-    </div>
-    
-    <!-- Channel: News IL 2022 -->
-    <div class="channel-wrapper">
-        <h2>News IL 2022</h2>
-        <div id="newsil-container" class="announcements-container">
-            <p class="loading">Loading messages...</p>
-        </div>
-    </div>
-
-    <!-- Channel: Real Time Security -->
-    <div class="channel-wrapper">
-        <h2>Real Time Security</h2>
-        <div id="realtimesecurity-container" class="announcements-container">
-            <p class="loading">Loading messages...</p>
-        </div>
-    </div>
-
-    <script src="script.js"></script>
-
-    <!-- Google Translate Script -->
-    <script type="text/javascript">
-    function googleTranslateElementInit() {
-      new google.translate.TranslateElement({pageLanguage: 'en', layout: google.translate.TranslateElement.InlineLayout.SIMPLE}, 'google_translate_element');
+// Channel configurations with their usernames
+const channels = [
+    {
+        name: 'N12 Chat',
+        username: 'N12Chat',  // Replace with actual username
+        container: 'n12chat-container'
+    },
+    {
+        name: 'Kodkod News IL',
+        username: 'kodkodnews',  // Replace with actual username
+        container: 'kodkod-container'
+    },
+    {
+        name: 'Abu Ali Express',
+        username: 'abualiexpress',  // Replace with actual username
+        container: 'abuali-container'
+    },
+    {
+        name: 'News IL 2022',
+        username: 'newsil2022',  // Replace with actual username
+        container: 'newsil-container'
+    },
+    {
+        name: 'Real Time Security',
+        username: 'realtimesecurity',  // Replace with actual username
+        container: 'realtimesecurity-container'
     }
-    </script>
-    <script type="text/javascript" src="//translate.google.com/translate_a/element.js?cb=googleTranslateElementInit"></script>
-</body>
-</html>
+];
+
+async function fetchChannelMessages(channelUsername, containerId) {
+    const container = document.getElementById(containerId);
+    
+    try {
+        console.log(`Fetching messages for ${channelUsername}...`);
+        
+        const response = await fetch(`/api/fetch-telegram?channel=${channelUsername}`);
+        const data = await response.json();
+        
+        if (!response.ok) {
+            throw new Error(data.error || 'Failed to fetch messages');
+        }
+        
+        if (!data || data.length === 0) {
+            container.innerHTML = '<p class="error">No messages found for this channel.</p>';
+            return;
+        }
+        
+        // Display messages
+        container.innerHTML = data.map(message => `
+            <div class="announcement-block">
+                <p>${escapeHtml(message.text)}</p>
+                <div class="date">${message.date}</div>
+            </div>
+        `).join('');
+        
+    } catch (error) {
+        console.error(`Error fetching ${channelUsername}:`, error);
+        container.innerHTML = `<p class="error">Error: ${error.message}</p>`;
+    }
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// Load all channels when page loads
+document.addEventListener('DOMContentLoaded', () => {
+    channels.forEach(channel => {
+        fetchChannelMessages(channel.username, channel.container);
+    });
+    
+    // Refresh every 5 minutes
+    setInterval(() => {
+        channels.forEach(channel => {
+            fetchChannelMessages(channel.username, channel.container);
+        });
+    }, 5 * 60 * 1000);
+});
