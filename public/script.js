@@ -83,7 +83,18 @@ async function fetchChannelMessages(channelUsername, containerId) {
 function displayMessages(messages, container, channelUsername) {
     const isTranslated = channelTranslationState[channelUsername] || false;
     
-    container.innerHTML = messages.map((message, index) => `
+    container.innerHTML = messages.map((message, index) => {
+        // Format date using user's local timezone
+        const date = new Date(message.dateISO);
+        const localDate = date.toLocaleString([], {
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: true
+        });
+        
+        return `
         <div class="announcement-block" data-message-id="${message.id}">
             <div class="message-content">
                 <div class="original-text ${isTranslated ? 'hidden' : ''}" data-original="${escapeHtml(message.text)}">
@@ -94,35 +105,62 @@ function displayMessages(messages, container, channelUsername) {
                 </div>
             </div>
             <div class="message-footer">
-                <span class="date">📅 ${message.date}</span>
+                <span class="date">📅 ${localDate}</span>
                 <div class="message-actions">
-                    <button class="translate-btn" onclick="translateSingleMessage('${channelUsername}', ${index}, this)" 
-                            title="Translate this message">
-                        🌐
-                    </button>
-                    <a href="${message.url}" target="_blank" class="view-link" title="View original">
-                        📱
-                    </a>
+                    <div class="translate-dropdown">
+                        <button class="translate-btn" onclick="toggleTranslateOptions(this)" 
+                                title="Translate this message">
+                            🌐
+                        </button>
+                        <div class="translate-options">
+                            <button onclick="translateSingleMessage('${channelUsername}', ${index}, this, 'en')" 
+                                    class="lang-option">🇺🇸 EN</button>
+                            <button onclick="translateSingleMessage('${channelUsername}', ${index}, this, 'ar')" 
+                                    class="lang-option">🇸🇦 AR</button>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
-    `).join('');
+    `;
+    }).join('');
 }
 
-async function translateChannelMessages(channelUsername, button) {
+function toggleTranslateOptions(button) {
+    const dropdown = button.closest('.translate-dropdown');
+    const options = dropdown.querySelector('.translate-options');
+    
+    // Close all other dropdowns
+    document.querySelectorAll('.translate-options.show').forEach(opt => {
+        if (opt !== options) opt.classList.remove('show');
+    });
+    
+    options.classList.toggle('show');
+}
+
+// Close dropdowns when clicking outside
+document.addEventListener('click', (e) => {
+    if (!e.target.closest('.translate-dropdown')) {
+        document.querySelectorAll('.translate-options.show').forEach(opt => {
+            opt.classList.remove('show');
+        });
+    }
+});
+
+async function translateChannelMessages(channelUsername, button, targetLang = 'en') {
     const container = document.getElementById(`${channelUsername.toLowerCase().replace(/[^a-z0-9]/g, '')}-container`);
     const messages = window[`${channelUsername}_messages`];
     
     if (!messages) return;
     
-    const isCurrentlyTranslated = channelTranslationState[channelUsername];
+    const currentState = channelTranslationState[channelUsername];
     
-    if (isCurrentlyTranslated) {
+    if (currentState && currentState.lang === targetLang) {
         // Switch back to original
-        channelTranslationState[channelUsername] = false;
+        channelTranslationState[channelUsername] = null;
         container.querySelectorAll('.original-text').forEach(el => el.classList.remove('hidden'));
         container.querySelectorAll('.translated-text').forEach(el => el.classList.add('hidden'));
-        button.innerHTML = '🌐 Translate All';
+        button.innerHTML = `🌐 Translate All`;
         button.classList.remove('translated');
         return;
     }
@@ -132,7 +170,7 @@ async function translateChannelMessages(channelUsername, button) {
     button.disabled = true;
     
     try {
-        const translatedMessages = await translateMessages(messages);
+        const translatedMessages = await translateMessages(messages, targetLang);
         
         // Update display with translated messages
         translatedMessages.forEach((translatedText, index) => {
@@ -147,8 +185,11 @@ async function translateChannelMessages(channelUsername, button) {
             }
         });
         
-        channelTranslationState[channelUsername] = true;
-        button.innerHTML = '🔤 Show Original';
+        const langFlag = targetLang === 'en' ? '🇺🇸' : '🇸🇦';
+        const langCode = targetLang.toUpperCase();
+        
+        channelTranslationState[channelUsername] = { lang: targetLang };
+        button.innerHTML = `🔤 Show Original`;
         button.classList.add('translated');
         
     } catch (error) {
@@ -163,13 +204,17 @@ async function translateChannelMessages(channelUsername, button) {
     }
 }
 
-async function translateSingleMessage(channelUsername, messageIndex, button) {
+async function translateSingleMessage(channelUsername, messageIndex, button, targetLang) {
     const messages = window[`${channelUsername}_messages`];
     if (!messages || !messages[messageIndex]) return;
     
     const messageBlock = button.closest('.announcement-block');
     const originalDiv = messageBlock.querySelector('.original-text');
     const translatedDiv = messageBlock.querySelector('.translated-text');
+    const translateBtn = messageBlock.querySelector('.translate-btn');
+    
+    // Close dropdown
+    button.closest('.translate-options').classList.remove('show');
     
     const isCurrentlyOriginal = !originalDiv.classList.contains('hidden');
     
@@ -177,50 +222,54 @@ async function translateSingleMessage(channelUsername, messageIndex, button) {
         // Switch back to original
         originalDiv.classList.remove('hidden');
         translatedDiv.classList.add('hidden');
-        button.innerHTML = '🌐';
-        button.title = 'Translate this message';
+        translateBtn.innerHTML = '🌐';
+        translateBtn.title = 'Translate this message';
         return;
     }
     
-    // Check if already translated
-    const existingTranslation = translatedDiv.getAttribute('data-translated');
+    // Check if already translated to this language
+    const existingTranslation = translatedDiv.getAttribute(`data-translated-${targetLang}`);
     if (existingTranslation) {
         originalDiv.classList.add('hidden');
         translatedDiv.classList.remove('hidden');
         translatedDiv.innerHTML = existingTranslation;
-        button.innerHTML = '🔤';
-        button.title = 'Show original';
+        
+        const langFlag = targetLang === 'en' ? '🇺🇸' : '🇸🇦';
+        translateBtn.innerHTML = langFlag;
+        translateBtn.title = 'Show original';
         return;
     }
     
     // Translate
-    button.innerHTML = '🔄';
+    translateBtn.innerHTML = '🔄';
     try {
         const originalText = messages[messageIndex].text;
-        const translatedText = await translateText(originalText);
+        const translatedText = await translateText(originalText, targetLang);
         
-        translatedDiv.setAttribute('data-translated', escapeHtml(translatedText));
+        translatedDiv.setAttribute(`data-translated-${targetLang}`, escapeHtml(translatedText));
         translatedDiv.innerHTML = escapeHtml(translatedText);
         originalDiv.classList.add('hidden');
         translatedDiv.classList.remove('hidden');
-        button.innerHTML = '🔤';
-        button.title = 'Show original';
+        
+        const langFlag = targetLang === 'en' ? '🇺🇸' : '🇸🇦';
+        translateBtn.innerHTML = langFlag;
+        translateBtn.title = 'Show original';
         
     } catch (error) {
         console.error('Translation error:', error);
-        button.innerHTML = '❌';
+        translateBtn.innerHTML = '❌';
         setTimeout(() => {
-            button.innerHTML = '🌐';
+            translateBtn.innerHTML = '🌐';
         }, 2000);
     }
 }
 
-async function translateMessages(messages) {
+async function translateMessages(messages, targetLang = 'en') {
     const translations = [];
     
     for (const message of messages) {
         try {
-            const translated = await translateText(message.text);
+            const translated = await translateText(message.text, targetLang);
             translations.push(translated);
             // Small delay to avoid rate limiting
             await new Promise(resolve => setTimeout(resolve, 100));
@@ -233,10 +282,10 @@ async function translateMessages(messages) {
     return translations;
 }
 
-async function translateText(text) {
+async function translateText(text, targetLang = 'en') {
     // Using Google Translate API through a proxy service
     try {
-        const response = await fetch(`https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=en&dt=t&q=${encodeURIComponent(text)}`);
+        const response = await fetch(`https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${targetLang}&dt=t&q=${encodeURIComponent(text)}`);
         const data = await response.json();
         
         if (data && data[0] && data[0][0] && data[0][0][0]) {
@@ -246,7 +295,6 @@ async function translateText(text) {
         throw new Error('Translation failed');
     } catch (error) {
         console.error('Translation API error:', error);
-        // Fallback to a simple replacement for common Hebrew/Arabic words (basic)
         return text; // Return original if translation fails
     }
 }
