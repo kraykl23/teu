@@ -228,4 +228,37 @@ footer {
     }
     
     header h1 {
-        font-size
+        font-size: 2rem;
+    }
+    
+    .controls {
+        flex-direction: column;
+        gap: 10px;
+    }
+    
+    .message-footer {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 5px;
+    }
+    
+    #google_translate_element {
+        position: relative;
+        top: auto;
+        right: auto;
+        margin-bottom: 10px;
+    }
+}
+
+/* Telegram widget override */
+.goog-te-gadget {
+    font-family: inherit !important;
+    font-size: 11px !important;
+}
+
+.goog-te-gadget-simple {
+    background-color: rgba(255, 255, 255, 0.9) !important;
+    border: 1px solid #ccc !important;
+    border-radius: 5px !important;
+    padding: 5px !important;
+}
