@@ -35,77 +35,248 @@ const channels = [
 // Translation state for each channel
 const channelTranslationState = {};
 
+// SECURITY: Rate limiting for client-side requests
+const rateLimitTracker = {
+    requests: [],
+    isAllowed() {
+        const now = Date.now();
+        const oneMinuteAgo = now - 60000;
+        
+        // Clean old requests
+        this.requests = this.requests.filter(time => time > oneMinuteAgo);
+        
+        // Check if under limit (30 requests per minute)
+        if (this.requests.length >= 30) {
+            return false;
+        }
+        
+        this.requests.push(now);
+        return true;
+    }
+};
+
+// SECURITY: Input validation
+function validateChannelUsername(username) {
+    if (!username || typeof username !== 'string') {
+        return false;
+    }
+    
+    // Only allow alphanumeric characters and underscores
+    const validPattern = /^[a-zA-Z0-9_]+$/;
+    if (!validPattern.test(username)) {
+        return false;
+    }
+    
+    // Check against allowed channels
+    const allowedChannels = ['MBSRsi98', 'N12chat', 'newsil2022', 'kodkod_news_il', 'Realtimesecurity1', 'abualiexpress'];
+    return allowedChannels.includes(username);
+}
+
+// SECURITY: Enhanced HTML sanitization
+function sanitizeText(text) {
+    if (!text || typeof text !== 'string') {
+        return '';
+    }
+    
+    // Remove potentially dangerous content
+    const cleanText = text
+        .replace(/<script[^>]*>.*?<\/script>/gi, '')
+        .replace(/<iframe[^>]*>.*?<\/iframe>/gi, '')
+        .replace(/<object[^>]*>.*?<\/object>/gi, '')
+        .replace(/<embed[^>]*>/gi, '')
+        .replace(/javascript:/gi, '')
+        .replace(/on\w+\s*=/gi, '')
+        .replace(/data:/gi, '')
+        .replace(/vbscript:/gi, '');
+    
+    return cleanText;
+}
+
+// SECURITY: Safe HTML escaping
+function escapeHtml(text) {
+    if (!text) return '';
+    
+    const div = document.createElement('div');
+    div.textContent = sanitizeText(text);
+    return div.innerHTML.replace(/\n/g, '<br>');
+}
+
+// SECURITY: Safe DOM manipulation
+function safeSetInnerHTML(element, htmlContent) {
+    if (!element || !htmlContent) return;
+    
+    // Create a temporary div to parse HTML safely
+    const tempDiv = document.createElement('div');
+    tempDiv.innerHTML = htmlContent;
+    
+    // Remove any potentially dangerous elements
+    const dangerousElements = tempDiv.querySelectorAll('script, iframe, object, embed, link, style');
+    dangerousElements.forEach(el => el.remove());
+    
+    // Remove dangerous attributes
+    const allElements = tempDiv.querySelectorAll('*');
+    allElements.forEach(el => {
+        const attributes = [...el.attributes];
+        attributes.forEach(attr => {
+            if (attr.name.startsWith('on') || 
+                attr.name === 'href' && attr.value.startsWith('javascript:') ||
+                attr.name === 'src' && attr.value.startsWith('javascript:')) {
+                el.removeAttribute(attr.name);
+            }
+        });
+    });
+    
+    element.innerHTML = tempDiv.innerHTML;
+}
+
+// SECURITY: Enhanced error handling
+function handleError(error, context = '') {
+    console.error(`Error in ${context}:`, error.message);
+    
+    // Don't expose sensitive information
+    const sanitizedError = error.message.includes('fetch') 
+        ? 'Network error occurred' 
+        : 'An error occurred';
+    
+    return sanitizedError;
+}
+
 async function fetchChannelMessages(channelUsername, containerId) {
+    // SECURITY: Validate inputs
+    if (!validateChannelUsername(channelUsername)) {
+        console.error('Invalid channel username:', channelUsername);
+        return;
+    }
+    
+    if (!rateLimitTracker.isAllowed()) {
+        console.warn('Rate limit exceeded');
+        return;
+    }
+    
     const container = document.getElementById(containerId);
+    if (!container) {
+        console.error('Container not found:', containerId);
+        return;
+    }
     
     try {
         console.log(`Fetching messages for @${channelUsername}...`);
         
         // Show loading state
-        container.innerHTML = '<div class="loading"><div class="spinner"></div><p>Loading messages...</p></div>';
+        safeSetInnerHTML(container, '<div class="loading"><div class="spinner"></div><p>Loading messages...</p></div>');
         
-        const response = await fetch(`/api/fetch-telegram?channel=${channelUsername}`);
-        const data = await response.json();
+        // SECURITY: Validate URL before making request
+        const apiUrl = `/api/fetch-telegram?channel=${encodeURIComponent(channelUsername)}`;
+        
+        const response = await fetch(apiUrl, {
+            method: 'GET',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            // SECURITY: Timeout to prevent hanging requests
+            signal: AbortSignal.timeout(15000)
+        });
         
         if (!response.ok) {
-            throw new Error(data.error || 'Failed to fetch messages');
+            const errorData = await response.json().catch(() => ({ error: 'Unknown error' }));
+            throw new Error(errorData.error || `HTTP ${response.status}`);
         }
         
-        if (!data || data.length === 0) {
-            container.innerHTML = '<div class="no-messages">📭 No recent messages found</div>';
+        const data = await response.json();
+        
+        // SECURITY: Validate response data
+        if (!Array.isArray(data)) {
+            throw new Error('Invalid response format');
+        }
+        
+        if (data.length === 0) {
+            safeSetInnerHTML(container, '<div class="no-messages">📭 No recent messages found</div>');
             return;
         }
         
-        // Store original messages for translation
-        window[`${channelUsername}_messages`] = data;
+        // SECURITY: Validate and sanitize each message
+        const sanitizedMessages = data.map(msg => ({
+            ...msg,
+            text: sanitizeText(msg.text || ''),
+            id: String(msg.id || '').replace(/[^a-zA-Z0-9]/g, ''),
+            channel: validateChannelUsername(msg.channel) ? msg.channel : channelUsername,
+            dateISO: new Date(msg.dateISO).toISOString() // Validate date
+        })).filter(msg => msg.text.length > 0);
+        
+        // Store sanitized messages
+        window[`${channelUsername}_messages`] = sanitizedMessages;
         
         // Display messages
-        displayMessages(data, container, channelUsername);
+        displayMessages(sanitizedMessages, container, channelUsername);
         
         // Update last refresh time
         updateLastRefresh(containerId);
         
     } catch (error) {
+        const errorMessage = handleError(error, 'fetchChannelMessages');
         console.error(`Error fetching ${channelUsername}:`, error);
-        container.innerHTML = `
+        
+        const errorHtml = `
             <div class="error-message">
                 <div class="error-icon">⚠️</div>
-                <p class="error-title">Failed to load @${channelUsername}</p>
-                <p class="error-details">${error.message}</p>
-                <button onclick="fetchChannelMessages('${channelUsername}', '${containerId}')" class="retry-btn">
+                <p class="error-title">Failed to load @${escapeHtml(channelUsername)}</p>
+                <p class="error-details">${escapeHtml(errorMessage)}</p>
+                <button onclick="fetchChannelMessages('${escapeHtml(channelUsername)}', '${escapeHtml(containerId)}')" class="retry-btn">
                     🔄 Try Again
                 </button>
             </div>
         `;
+        
+        safeSetInnerHTML(container, errorHtml);
     }
 }
 
 function displayMessages(messages, container, channelUsername) {
+    if (!Array.isArray(messages) || !container || !validateChannelUsername(channelUsername)) {
+        return;
+    }
+    
     const isTranslated = channelTranslationState[channelUsername] || false;
     
-    container.innerHTML = messages.map((message, index) => {
+    const messagesHtml = messages.map((message, index) => {
+        // SECURITY: Validate message data
+        if (!message || typeof message !== 'object') {
+            return '';
+        }
+        
         // Format date using user's local timezone
-        const date = new Date(message.dateISO);
-        const localDate = date.toLocaleString([], {
-            month: 'short',
-            day: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit',
-            hour12: true
-        });
+        let localDate = 'Invalid date';
+        try {
+            const date = new Date(message.dateISO);
+            if (!isNaN(date.getTime())) {
+                localDate = date.toLocaleString([], {
+                    month: 'short',
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    hour12: true
+                });
+            }
+        } catch (e) {
+            console.warn('Invalid date:', message.dateISO);
+        }
+        
+        const messageId = escapeHtml(String(message.id || ''));
+        const messageText = escapeHtml(message.text || '');
+        const channelName = escapeHtml(channelUsername);
         
         return `
-        <div class="announcement-block" data-message-id="${message.id}">
+        <div class="announcement-block" data-message-id="${messageId}">
             <div class="message-content">
-                <div class="original-text ${isTranslated ? 'hidden' : ''}" data-original="${escapeHtml(message.text)}">
-                    ${escapeHtml(message.text)}
+                <div class="original-text ${isTranslated ? 'hidden' : ''}" data-original="${messageText}">
+                    ${messageText}
                 </div>
                 <div class="translated-text ${isTranslated ? '' : 'hidden'}" data-translated="">
                     <div class="translation-loading">🔄 Translating...</div>
                 </div>
             </div>
             <div class="message-footer">
-                <span class="date">📅 ${localDate}</span>
+                <span class="date">📅 ${escapeHtml(localDate)}</span>
                 <div class="message-actions">
                     <div class="translate-dropdown">
                         <button class="translate-btn" onclick="toggleTranslateOptions(this)" 
@@ -113,23 +284,30 @@ function displayMessages(messages, container, channelUsername) {
                             🌐
                         </button>
                         <div class="translate-options">
-                            <button onclick="translateSingleMessage('${channelUsername}', ${index}, this, 'en')" 
+                            <button onclick="translateSingleMessage('${channelName}', ${index}, this, 'en')" 
                                     class="lang-option">🇺🇸 EN</button>
-                            <button onclick="translateSingleMessage('${channelUsername}', ${index}, this, 'ar')" 
+                            <button onclick="translateSingleMessage('${channelName}', ${index}, this, 'ar')" 
                                     class="lang-option">🇸🇦 AR</button>
                         </div>
                     </div>
                 </div>
             </div>
         </div>
-    `;
-    }).join('');
+        `;
+    }).filter(html => html.length > 0).join('');
+    
+    safeSetInnerHTML(container, messagesHtml);
 }
 
 // Handle channel-level translation dropdown
 function toggleChannelTranslateOptions(button) {
+    if (!button || !button.closest) return;
+    
     const dropdown = button.closest('.channel-translate-dropdown');
+    if (!dropdown) return;
+    
     const options = dropdown.querySelector('.channel-translate-options');
+    if (!options) return;
     
     // Close all other channel dropdowns
     document.querySelectorAll('.channel-translate-options.show').forEach(opt => {
@@ -141,8 +319,13 @@ function toggleChannelTranslateOptions(button) {
 
 // Handle individual message translation dropdown
 function toggleTranslateOptions(button) {
+    if (!button || !button.closest) return;
+    
     const dropdown = button.closest('.translate-dropdown');
+    if (!dropdown) return;
+    
     const options = dropdown.querySelector('.translate-options');
+    if (!options) return;
     
     // Close all other dropdowns
     document.querySelectorAll('.translate-options.show').forEach(opt => {
@@ -162,17 +345,29 @@ document.addEventListener('click', (e) => {
 });
 
 async function translateChannelMessages(channelUsername, button, targetLang = 'en') {
+    // SECURITY: Validate inputs
+    if (!validateChannelUsername(channelUsername) || !button) {
+        return;
+    }
+    
+    if (!['en', 'ar'].includes(targetLang)) {
+        console.error('Invalid target language:', targetLang);
+        return;
+    }
+    
     const container = document.getElementById(`${channelUsername.toLowerCase().replace(/[^a-z0-9]/g, '')}-container`);
     const messages = window[`${channelUsername}_messages`];
     
-    if (!messages) return;
+    if (!messages || !Array.isArray(messages)) return;
     
     // Close dropdown
     const dropdown = button.closest('.channel-translate-dropdown');
-    const options = dropdown.querySelector('.channel-translate-options');
-    options.classList.remove('show');
+    if (dropdown) {
+        const options = dropdown.querySelector('.channel-translate-options');
+        if (options) options.classList.remove('show');
+    }
     
-    const mainButton = dropdown.querySelector('.translate-channel-btn');
+    const mainButton = dropdown ? dropdown.querySelector('.translate-channel-btn') : button;
     const currentState = channelTranslationState[channelUsername];
     
     if (currentState && currentState.lang === targetLang) {
@@ -180,13 +375,13 @@ async function translateChannelMessages(channelUsername, button, targetLang = 'e
         channelTranslationState[channelUsername] = null;
         container.querySelectorAll('.original-text').forEach(el => el.classList.remove('hidden'));
         container.querySelectorAll('.translated-text').forEach(el => el.classList.add('hidden'));
-        mainButton.innerHTML = `🌐 Translate All`;
+        mainButton.textContent = '🌐 Translate All';
         mainButton.classList.remove('translated');
         return;
     }
     
     // Start translation
-    mainButton.innerHTML = '🔄 Translating...';
+    mainButton.textContent = '🔄 Translating...';
     mainButton.disabled = true;
     
     try {
@@ -194,29 +389,31 @@ async function translateChannelMessages(channelUsername, button, targetLang = 'e
         
         // Update display with translated messages
         translatedMessages.forEach((translatedText, index) => {
-            const messageBlock = container.querySelector(`[data-message-id="${messages[index].id}"]`);
-            if (messageBlock) {
-                const originalDiv = messageBlock.querySelector('.original-text');
-                const translatedDiv = messageBlock.querySelector('.translated-text');
-                
-                translatedDiv.innerHTML = escapeHtml(translatedText);
-                originalDiv.classList.add('hidden');
-                translatedDiv.classList.remove('hidden');
+            if (index < messages.length) {
+                const messageBlock = container.querySelector(`[data-message-id="${escapeHtml(String(messages[index].id))}"]`);
+                if (messageBlock) {
+                    const originalDiv = messageBlock.querySelector('.original-text');
+                    const translatedDiv = messageBlock.querySelector('.translated-text');
+                    
+                    if (originalDiv && translatedDiv) {
+                        safeSetInnerHTML(translatedDiv, escapeHtml(translatedText));
+                        originalDiv.classList.add('hidden');
+                        translatedDiv.classList.remove('hidden');
+                    }
+                }
             }
         });
         
-        const langFlag = targetLang === 'en' ? '🇺🇸' : '🇸🇦';
-        const langCode = targetLang.toUpperCase();
-        
         channelTranslationState[channelUsername] = { lang: targetLang };
-        mainButton.innerHTML = `🔤 Show Original`;
+        mainButton.textContent = '🔤 Show Original';
         mainButton.classList.add('translated');
         
     } catch (error) {
+        const errorMessage = handleError(error, 'translateChannelMessages');
         console.error('Translation error:', error);
-        mainButton.innerHTML = '❌ Translation Failed';
+        mainButton.textContent = '❌ Translation Failed';
         setTimeout(() => {
-            mainButton.innerHTML = '🌐 Translate All';
+            mainButton.textContent = '🌐 Translate All';
             mainButton.disabled = false;
         }, 2000);
     } finally {
@@ -225,16 +422,33 @@ async function translateChannelMessages(channelUsername, button, targetLang = 'e
 }
 
 async function translateSingleMessage(channelUsername, messageIndex, button, targetLang) {
+    // SECURITY: Validate inputs
+    if (!validateChannelUsername(channelUsername) || !button) {
+        return;
+    }
+    
+    if (!['en', 'ar'].includes(targetLang)) {
+        console.error('Invalid target language:', targetLang);
+        return;
+    }
+    
     const messages = window[`${channelUsername}_messages`];
-    if (!messages || !messages[messageIndex]) return;
+    if (!messages || !Array.isArray(messages) || messageIndex < 0 || messageIndex >= messages.length) {
+        return;
+    }
     
     const messageBlock = button.closest('.announcement-block');
+    if (!messageBlock) return;
+    
     const originalDiv = messageBlock.querySelector('.original-text');
     const translatedDiv = messageBlock.querySelector('.translated-text');
     const translateBtn = messageBlock.querySelector('.translate-btn');
     
+    if (!originalDiv || !translatedDiv || !translateBtn) return;
+    
     // Close dropdown
-    button.closest('.translate-options').classList.remove('show');
+    const options = button.closest('.translate-options');
+    if (options) options.classList.remove('show');
     
     const isCurrentlyOriginal = !originalDiv.classList.contains('hidden');
     
@@ -242,7 +456,7 @@ async function translateSingleMessage(channelUsername, messageIndex, button, tar
         // Switch back to original
         originalDiv.classList.remove('hidden');
         translatedDiv.classList.add('hidden');
-        translateBtn.innerHTML = '🌐';
+        translateBtn.textContent = '🌐';
         translateBtn.title = 'Translate this message';
         return;
     }
@@ -252,50 +466,64 @@ async function translateSingleMessage(channelUsername, messageIndex, button, tar
     if (existingTranslation) {
         originalDiv.classList.add('hidden');
         translatedDiv.classList.remove('hidden');
-        translatedDiv.innerHTML = existingTranslation;
+        safeSetInnerHTML(translatedDiv, existingTranslation);
         
         const langFlag = targetLang === 'en' ? '🇺🇸' : '🇸🇦';
-        translateBtn.innerHTML = langFlag;
+        translateBtn.textContent = langFlag;
         translateBtn.title = 'Show original';
         return;
     }
     
     // Translate
-    translateBtn.innerHTML = '🔄';
+    translateBtn.textContent = '🔄';
     try {
         const originalText = messages[messageIndex].text;
-        const translatedText = await translateText(originalText, targetLang);
+        if (!originalText) {
+            throw new Error('No text to translate');
+        }
         
-        translatedDiv.setAttribute(`data-translated-${targetLang}`, escapeHtml(translatedText));
-        translatedDiv.innerHTML = escapeHtml(translatedText);
+        const translatedText = await translateText(originalText, targetLang);
+        const escapedTranslation = escapeHtml(translatedText);
+        
+        translatedDiv.setAttribute(`data-translated-${targetLang}`, escapedTranslation);
+        safeSetInnerHTML(translatedDiv, escapedTranslation);
         originalDiv.classList.add('hidden');
         translatedDiv.classList.remove('hidden');
         
         const langFlag = targetLang === 'en' ? '🇺🇸' : '🇸🇦';
-        translateBtn.innerHTML = langFlag;
+        translateBtn.textContent = langFlag;
         translateBtn.title = 'Show original';
         
     } catch (error) {
+        const errorMessage = handleError(error, 'translateSingleMessage');
         console.error('Translation error:', error);
-        translateBtn.innerHTML = '❌';
+        translateBtn.textContent = '❌';
         setTimeout(() => {
-            translateBtn.innerHTML = '🌐';
+            translateBtn.textContent = '🌐';
         }, 2000);
     }
 }
 
 async function translateMessages(messages, targetLang = 'en') {
+    if (!Array.isArray(messages) || !['en', 'ar'].includes(targetLang)) {
+        return [];
+    }
+    
     const translations = [];
     
     for (const message of messages) {
         try {
-            const translated = await translateText(message.text, targetLang);
-            translations.push(translated);
+            if (message && message.text) {
+                const translated = await translateText(message.text, targetLang);
+                translations.push(translated);
+            } else {
+                translations.push('');
+            }
             // Small delay to avoid rate limiting
             await new Promise(resolve => setTimeout(resolve, 100));
         } catch (error) {
             console.error('Error translating message:', error);
-            translations.push(message.text); // Fallback to original
+            translations.push(message.text || ''); // Fallback to original
         }
     }
     
@@ -303,36 +531,71 @@ async function translateMessages(messages, targetLang = 'en') {
 }
 
 async function translateText(text, targetLang = 'en') {
-    // Using Google Translate API through a proxy service
+    // SECURITY: Validate inputs
+    if (!text || typeof text !== 'string' || text.trim().length === 0) {
+        return text || '';
+    }
+    
+    if (!['en', 'ar'].includes(targetLang)) {
+        throw new Error('Invalid target language');
+    }
+    
+    // SECURITY: Limit text length
+    const maxLength = 5000;
+    const textToTranslate = text.length > maxLength ? text.substring(0, maxLength) + '...' : text;
+    
     try {
-        const response = await fetch(`https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${targetLang}&dt=t&q=${encodeURIComponent(text)}`);
-        const data = await response.json();
+        // Using Google Translate API through a proxy service
+        const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${encodeURIComponent(targetLang)}&dt=t&q=${encodeURIComponent(textToTranslate)}`;
         
-        if (data && data[0] && data[0][0] && data[0][0][0]) {
-            return data[0].map(item => item[0]).join('');
+        const response = await fetch(url, {
+            method: 'GET',
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (compatible; TranslateBot/1.0)'
+            },
+            signal: AbortSignal.timeout(10000) // 10 second timeout
+        });
+        
+        if (!response.ok) {
+            throw new Error(`Translation service error: ${response.status}`);
         }
         
-        throw new Error('Translation failed');
+        const data = await response.json();
+        
+        if (data && Array.isArray(data) && data[0] && Array.isArray(data[0])) {
+            const translatedText = data[0]
+                .filter(item => Array.isArray(item) && item[0])
+                .map(item => item[0])
+                .join('');
+            
+            return translatedText || textToTranslate;
+        }
+        
+        throw new Error('Invalid translation response');
     } catch (error) {
         console.error('Translation API error:', error);
-        return text; // Return original if translation fails
+        return textToTranslate; // Return original if translation fails
     }
 }
 
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML.replace(/\n/g, '<br>');
-}
-
 function updateLastRefresh(containerId) {
-    const wrapper = document.querySelector(`#${containerId}`).closest('.channel-wrapper');
+    if (!containerId || typeof containerId !== 'string') return;
+    
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    
+    const wrapper = container.closest('.channel-wrapper');
+    if (!wrapper) return;
+    
     let refreshInfo = wrapper.querySelector('.refresh-info');
     
     if (!refreshInfo) {
         refreshInfo = document.createElement('span');
         refreshInfo.className = 'refresh-info';
-        wrapper.querySelector('.channel-header').appendChild(refreshInfo);
+        const header = wrapper.querySelector('.channel-header');
+        if (header) {
+            header.appendChild(refreshInfo);
+        }
     }
     
     const now = new Date();
@@ -354,9 +617,13 @@ function startAutoRefresh() {
         
         try {
             for (const channel of channels) {
-                await fetchChannelMessages(channel.username, channel.container);
-                await new Promise(resolve => setTimeout(resolve, 1000));
+                if (validateChannelUsername(channel.username)) {
+                    await fetchChannelMessages(channel.username, channel.container);
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                }
             }
+        } catch (error) {
+            console.error('Auto-refresh error:', error);
         } finally {
             isRefreshing = false;
         }
@@ -383,9 +650,13 @@ async function refreshAll() {
     
     try {
         for (const channel of channels) {
-            await fetchChannelMessages(channel.username, channel.container);
-            await new Promise(resolve => setTimeout(resolve, 800));
+            if (validateChannelUsername(channel.username)) {
+                await fetchChannelMessages(channel.username, channel.container);
+                await new Promise(resolve => setTimeout(resolve, 800));
+            }
         }
+    } catch (error) {
+        console.error('Refresh all error:', error);
     } finally {
         isRefreshing = false;
         if (refreshBtn) {
@@ -405,9 +676,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     try {
         // Load initial messages
         for (const channel of channels) {
-            await fetchChannelMessages(channel.username, channel.container);
-            await new Promise(resolve => setTimeout(resolve, 600));
+            if (validateChannelUsername(channel.username)) {
+                await fetchChannelMessages(channel.username, channel.container);
+                await new Promise(resolve => setTimeout(resolve, 600));
+            }
         }
+    } catch (error) {
+        console.error('Initialization error:', error);
     } finally {
         document.body.classList.remove('loading-app');
     }
@@ -436,12 +711,14 @@ let startY = 0;
 let isAtTop = true;
 
 document.addEventListener('touchstart', (e) => {
-    startY = e.touches[0].clientY;
-    isAtTop = window.scrollY === 0;
+    if (e.touches && e.touches[0]) {
+        startY = e.touches[0].clientY;
+        isAtTop = window.scrollY === 0;
+    }
 });
 
 document.addEventListener('touchmove', (e) => {
-    if (!isAtTop) return;
+    if (!isAtTop || !e.touches || !e.touches[0]) return;
     
     const currentY = e.touches[0].clientY;
     const pullDistance = currentY - startY;
@@ -455,7 +732,7 @@ document.addEventListener('touchmove', (e) => {
 document.addEventListener('touchend', (e) => {
     document.body.classList.remove('pull-to-refresh');
     
-    if (!isAtTop) return;
+    if (!isAtTop || !e.changedTouches || !e.changedTouches[0]) return;
     
     const currentY = e.changedTouches[0].clientY;
     const pullDistance = currentY - startY;
@@ -463,4 +740,17 @@ document.addEventListener('touchend', (e) => {
     if (pullDistance > 100 && !isRefreshing) {
         refreshAll();
     }
+});
+
+// SECURITY: Global error handler
+window.addEventListener('error', (event) => {
+    console.error('Global error:', event.error);
+    // Don't expose sensitive information
+    event.preventDefault();
+});
+
+// SECURITY: Unhandled promise rejection handler
+window.addEventListener('unhandledrejection', (event) => {
+    console.error('Unhandled promise rejection:', event.reason);
+    event.preventDefault();
 });
