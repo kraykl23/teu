@@ -1,51 +1,102 @@
-// Corrected File: api/fetch-telegram.js
-
-// This uses the 'module.exports' syntax which is more broadly compatible.
-module.exports = async (request, response) => {
-    const channelId = request.query.channel;
-
-    if (!channelId) {
-        return response.status(400).json({ error: 'Channel username is required' });
+export default async function handler(request, response) {
+    // Enable CORS for frontend requests
+    response.setHeader('Access-Control-Allow-Origin', '*');
+    response.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    response.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    
+    if (request.method === 'OPTIONS') {
+        return response.status(200).end();
     }
 
-    // This securely gets the bot token you set up in Vercel.
+    const channelUsername = request.query.channel;
+
+    if (!channelUsername) {
+        return response.status(400).json({ 
+            error: 'Channel username is required. Use: /api/fetch-telegram?channel=channelname' 
+        });
+    }
+
     const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-    const MESSAGE_LIMIT = 10; // Get the 10 most recent messages
-
-    // If the BOT_TOKEN is missing, stop immediately and show an error.
+    
     if (!BOT_TOKEN) {
-        console.error("TELEGRAM_BOT_TOKEN is not set in Vercel Environment Variables.");
-        return response.status(500).json({ error: 'Server configuration error: Missing API Token.' });
+        return response.status(500).json({ 
+            error: 'Bot token not configured in Vercel environment variables' 
+        });
     }
-
-    const url = `https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?offset=-${MESSAGE_LIMIT}&chat_id=${channelId}`;
 
     try {
-        const apiResponse = await fetch(url);
-        const data = await apiResponse.json();
+        console.log(`Fetching messages for channel: ${channelUsername}`);
 
-        // Check if Telegram returned an error (e.g., chat not found)
-        if (!data.ok) {
-            console.error(`Telegram API Error for channel ${channelId}:`, data.description);
-            return response.status(404).json({ error: data.description });
+        // First, get the chat ID for the channel
+        const chatResponse = await fetch(
+            `https://api.telegram.org/bot${BOT_TOKEN}/getChat?chat_id=@${channelUsername}`
+        );
+        
+        if (!chatResponse.ok) {
+            const chatError = await chatResponse.json();
+            console.error('Chat error:', chatError);
+            return response.status(400).json({ 
+                error: `Cannot access channel @${channelUsername}. Make sure: 1) Channel username is correct, 2) Bot is added as admin to the channel, 3) Channel is public or bot has access. Details: ${chatError.description}` 
+            });
+        }
+        
+        const chatData = await chatResponse.json();
+        const chatId = chatData.result.id;
+        
+        console.log(`Found chat ID: ${chatId} for @${channelUsername}`);
+
+        // Get recent updates
+        const updatesResponse = await fetch(
+            `https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?limit=100`
+        );
+        
+        if (!updatesResponse.ok) {
+            const updatesError = await updatesResponse.json();
+            return response.status(updatesResponse.status).json({ 
+                error: updatesError.description || 'Failed to fetch updates from Telegram' 
+            });
+        }
+        
+        const updatesData = await updatesResponse.json();
+        
+        // Filter messages from the specific channel
+        const channelMessages = updatesData.result
+            .filter(update => {
+                return update.channel_post && 
+                       update.channel_post.chat.id === chatId &&
+                       (update.channel_post.text || update.channel_post.caption);
+            })
+            .map(update => {
+                const post = update.channel_post;
+                return {
+                    id: post.message_id,
+                    text: post.text || post.caption || '',
+                    date: new Date(post.date * 1000).toLocaleString('en-US', {
+                        year: 'numeric',
+                        month: 'short',
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        timeZoneName: 'short'
+                    }),
+                    timestamp: post.date
+                };
+            })
+            .sort((a, b) => b.timestamp - a.timestamp) // Most recent first
+            .slice(0, 10); // Get latest 10 messages
+
+        console.log(`Found ${channelMessages.length} messages for @${channelUsername}`);
+
+        if (channelMessages.length === 0) {
+            return response.status(200).json([]);
         }
 
-        const messages = data.result
-            .filter(update => update.channel_post && update.channel_post.text)
-            .map(update => ({
-                text: update.channel_post.text,
-                date: new Date(update.channel_post.date * 1000).toUTCString(),
-            }))
-            .slice(-MESSAGE_LIMIT)
-            .reverse();
-
-        // Set caching headers to tell browsers (and Vercel) to cache the response for 5 minutes (300 seconds)
-        response.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate');
-        
-        response.status(200).json(messages);
+        response.status(200).json(channelMessages);
 
     } catch (error) {
-        console.error('Catch Block Error:', error);
-        response.status(500).json({ error: 'The serverless function encountered an exception.' });
+        console.error('Server error:', error);
+        response.status(500).json({ 
+            error: 'Internal server error. Check server logs for details.' 
+        });
     }
-};
+}
