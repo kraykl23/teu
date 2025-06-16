@@ -21,14 +21,14 @@ export default async function handler(request, response) {
         const channelUrl = `https://t.me/s/${channelUsername}`;
         const pageResponse = await fetch(channelUrl, {
             headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
             }
         });
 
         if (!pageResponse.ok) {
             if (pageResponse.status === 404) {
                 return response.status(404).json({ 
-                    error: `Channel @${channelUsername} not found. Make sure the channel username is correct and the channel is public.` 
+                    error: `Channel @${channelUsername} not found or is private` 
                 });
             }
             throw new Error(`HTTP ${pageResponse.status}: ${pageResponse.statusText}`);
@@ -55,19 +55,27 @@ function parseChannelMessages(html, channelUsername) {
     const messages = [];
     
     try {
-        // Extract message blocks using regex (since we can't use DOM parser in Vercel)
-        const messagePattern = /<div class="tgme_widget_message_wrap[^>]*>(.*?)<\/div>\s*(?=<div class="tgme_widget_message_wrap|$)/gs;
+        // Extract message blocks using regex
+        const messagePattern = /<div class="tgme_widget_message_wrap[^>]*>(.*?)<\/div>\s*(?=<div class="tgme_widget_message_wrap|<\/div>\s*<\/div>\s*<\/div>)/gs;
         const messageMatches = [...html.matchAll(messagePattern)];
         
-        for (const match of messageMatches.slice(-10)) { // Get last 10 messages
+        for (const match of messageMatches.slice(-15)) { // Get last 15 messages
             const messageHtml = match[1];
             
             // Extract message text
-            const textMatch = messageHtml.match(/<div class="tgme_widget_message_text[^>]*(?:dir="auto")?[^>]*>(.*?)<\/div>/s);
+            const textMatch = messageHtml.match(/<div class="tgme_widget_message_text[^>]*>(.*?)<\/div>/s);
             let messageText = '';
             
             if (textMatch) {
                 messageText = cleanHtmlText(textMatch[1]);
+            }
+            
+            // If no text, check for media caption
+            if (!messageText) {
+                const captionMatch = messageHtml.match(/<div class="tgme_widget_message_caption[^>]*>(.*?)<\/div>/s);
+                if (captionMatch) {
+                    messageText = cleanHtmlText(captionMatch[1]);
+                }
             }
             
             // Skip if no text content
@@ -76,23 +84,25 @@ function parseChannelMessages(html, channelUsername) {
             }
             
             // Extract date/time
-            const dateMatch = messageHtml.match(/<time[^>]*datetime="([^"]*)"[^>]*>([^<]*)<\/time>/);
+            const dateMatch = messageHtml.match(/<time[^>]*datetime="([^"]*)"[^>]*>/);
             let dateStr = new Date().toISOString();
             let displayDate = 'Recently';
             
             if (dateMatch) {
                 dateStr = dateMatch[1];
-                displayDate = new Date(dateStr).toLocaleString('en-US', {
+                const date = new Date(dateStr);
+                displayDate = date.toLocaleString('en-US', {
                     month: 'short',
                     day: 'numeric',
                     hour: '2-digit',
-                    minute: '2-digit'
+                    minute: '2-digit',
+                    hour12: true
                 });
             }
             
-            // Extract message ID for uniqueness
+            // Extract message ID
             const idMatch = messageHtml.match(/data-post="[^/]*\/(\d+)"/);
-            const messageId = idMatch ? idMatch[1] : Date.now().toString();
+            const messageId = idMatch ? idMatch[1] : Math.random().toString(36).substr(2, 9);
             
             messages.push({
                 id: messageId,
@@ -106,6 +116,7 @@ function parseChannelMessages(html, channelUsername) {
         
         // Sort by timestamp (newest first) and limit to 10
         return messages
+            .filter(msg => msg.text.length > 10) // Filter out very short messages
             .sort((a, b) => b.timestamp - a.timestamp)
             .slice(0, 10);
             
@@ -118,12 +129,17 @@ function parseChannelMessages(html, channelUsername) {
 function cleanHtmlText(html) {
     return html
         .replace(/<br\s*\/?>/gi, '\n')
-        .replace(/<a[^>]*href="([^"]*)"[^>]*>([^<]*)<\/a>/gi, '$2 ($1)')
+        .replace(/<\/p>/gi, '\n')
+        .replace(/<p[^>]*>/gi, '')
+        .replace(/<a[^>]*href="([^"]*)"[^>]*>([^<]*)<\/a>/gi, '$2')
+        .replace(/<strong[^>]*>([^<]*)<\/strong>/gi, '$1')
+        .replace(/<em[^>]*>([^<]*)<\/em>/gi, '$1')
         .replace(/<[^>]*>/g, '')
         .replace(/&lt;/g, '<')
         .replace(/&gt;/g, '>')
         .replace(/&amp;/g, '&')
         .replace(/&quot;/g, '"')
         .replace(/&#(\d+);/g, (match, dec) => String.fromCharCode(dec))
+        .replace(/\s+/g, ' ')
         .trim();
 }
