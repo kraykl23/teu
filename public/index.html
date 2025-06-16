@@ -5,60 +5,94 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Israel News Feed</title>
     <link rel="stylesheet" href="style.css">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📰</text></svg>">
 </head>
 <body>
-    <!-- Optional: Google Translate Widget -->
-    <div id="google_translate_element" style="text-align: right; padding: 10px;"></div>
+    <!-- Google Translate Widget -->
+    <div id="google_translate_element"></div>
 
-    <h1>Israel News Feed</h1>
-    <p class="subtitle">Live updates from Telegram</p>
+    <header>
+        <h1>🇮🇱 Israel News Feed</h1>
+        <p class="subtitle">Live updates from Telegram channels</p>
+        <div class="controls">
+            <button id="refresh-all-btn" onclick="refreshAll()">🔄 Refresh All</button>
+            <span class="auto-refresh-info">Auto-refreshes every 3 minutes</span>
+        </div>
+    </header>
 
-    <!-- Channel: N12 Chat -->
-    <div class="channel-wrapper">
-        <h2>N12 Chat</h2>
-        <div id="n12chat-container" class="announcements-container">
-            <p class="loading">Loading messages...</p>
+    <main class="channels-container">
+        <!-- Breach Detector -->
+        <div class="channel-wrapper">
+            <h2>🔍 Breach Detector</h2>
+            <div id="breachdetector-container" class="announcements-container">
+                <p class="loading">Loading messages...</p>
+            </div>
         </div>
-    </div>
 
-    <!-- Channel: Kodkod News -->
-    <div class="channel-wrapper">
-        <h2>Kodkod News IL</h2>
-        <div id="kodkod-container" class="announcements-container">
-            <p class="loading">Loading messages...</p>
+        <!-- MBS Rsi98 -->
+        <div class="channel-wrapper">
+            <h2>📊 MBS Rsi98</h2>
+            <div id="mbsrsi98-container" class="announcements-container">
+                <p class="loading">Loading messages...</p>
+            </div>
         </div>
-    </div>
 
-    <!-- Channel: Abu Ali Express -->
-    <div class="channel-wrapper">
-        <h2>Abu Ali Express</h2>
-        <div id="abuali-container" class="announcements-container">
-            <p class="loading">Loading messages...</p>
+        <!-- N12 Chat -->
+        <div class="channel-wrapper">
+            <h2>📺 N12 Chat</h2>
+            <div id="n12chat-container" class="announcements-container">
+                <p class="loading">Loading messages...</p>
+            </div>
         </div>
-    </div>
-    
-    <!-- Channel: News IL 2022 -->
-    <div class="channel-wrapper">
-        <h2>News IL 2022</h2>
-        <div id="newsil-container" class="announcements-container">
-            <p class="loading">Loading messages...</p>
-        </div>
-    </div>
 
-    <!-- Channel: Real Time Security -->
-    <div class="channel-wrapper">
-        <h2>Real Time Security</h2>
-        <div id="realtimesecurity-container" class="announcements-container">
-            <p class="loading">Loading messages...</p>
+        <!-- News IL 2022 -->
+        <div class="channel-wrapper">
+            <h2>📰 News IL 2022</h2>
+            <div id="newsil2022-container" class="announcements-container">
+                <p class="loading">Loading messages...</p>
+            </div>
         </div>
-    </div>
+
+        <!-- Kodkod News IL -->
+        <div class="channel-wrapper">
+            <h2>🏛️ Kodkod News IL</h2>
+            <div id="kodkod-container" class="announcements-container">
+                <p class="loading">Loading messages...</p>
+            </div>
+        </div>
+
+        <!-- Real Time Security -->
+        <div class="channel-wrapper">
+            <h2>🛡️ Real Time Security</h2>
+            <div id="realtimesecurity-container" class="announcements-container">
+                <p class="loading">Loading messages...</p>
+            </div>
+        </div>
+
+        <!-- Abu Ali Express -->
+        <div class="channel-wrapper">
+            <h2>⚡ Abu Ali Express</h2>
+            <div id="abuali-container" class="announcements-container">
+                <p class="loading">Loading messages...</p>
+            </div>
+        </div>
+    </main>
+
+    <footer>
+        <p>📡 Scraping public Telegram channels • No permissions required • Auto-refreshed</p>
+    </footer>
 
     <script src="script.js"></script>
 
     <!-- Google Translate Script -->
     <script type="text/javascript">
     function googleTranslateElementInit() {
-      new google.translate.TranslateElement({pageLanguage: 'en', layout: google.translate.TranslateElement.InlineLayout.SIMPLE}, 'google_translate_element');
+        new google.translate.TranslateElement({
+            pageLanguage: 'en',
+            includedLanguages: 'en,he,ar,ru,es,fr',
+            layout: google.translate.TranslateElement.InlineLayout.SIMPLE,
+            autoDisplay: false
+        }, 'google_translate_element');
     }
     </script>
     <script type="text/javascript" src="//translate.google.com/translate_a/element.js?cb=googleTranslateElementInit"></script>
