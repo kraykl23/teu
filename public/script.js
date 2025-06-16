@@ -1,4 +1,4 @@
-// Your channels
+// Your channels (removed breachdetector as requested)
 const channels = [
     {
         name: 'MBS Rsi98',
@@ -162,15 +162,10 @@ document.addEventListener('click', (e) => {
 });
 
 async function translateChannelMessages(channelUsername, button, targetLang = 'en') {
-    console.log(`🔄 Translating all messages for ${channelUsername} to ${targetLang}`);
-    
     const container = document.getElementById(`${channelUsername.toLowerCase().replace(/[^a-z0-9]/g, '')}-container`);
     const messages = window[`${channelUsername}_messages`];
     
-    if (!messages) {
-        console.error('No messages found for translation');
-        return;
-    }
+    if (!messages) return;
     
     // Close dropdown
     const dropdown = button.closest('.channel-translate-dropdown');
@@ -210,11 +205,12 @@ async function translateChannelMessages(channelUsername, button, targetLang = 'e
             }
         });
         
+        const langFlag = targetLang === 'en' ? '🇺🇸' : '🇸🇦';
+        const langCode = targetLang.toUpperCase();
+        
         channelTranslationState[channelUsername] = { lang: targetLang };
         mainButton.innerHTML = `🔤 Show Original`;
         mainButton.classList.add('translated');
-        
-        console.log(`✅ Channel translation completed`);
         
     } catch (error) {
         console.error('Translation error:', error);
@@ -229,13 +225,8 @@ async function translateChannelMessages(channelUsername, button, targetLang = 'e
 }
 
 async function translateSingleMessage(channelUsername, messageIndex, button, targetLang) {
-    console.log(`🔄 Translating single message: ${channelUsername}[${messageIndex}] to ${targetLang}`);
-    
     const messages = window[`${channelUsername}_messages`];
-    if (!messages || !messages[messageIndex]) {
-        console.error('Message not found for translation');
-        return;
-    }
+    if (!messages || !messages[messageIndex]) return;
     
     const messageBlock = button.closest('.announcement-block');
     const originalDiv = messageBlock.querySelector('.original-text');
@@ -269,40 +260,27 @@ async function translateSingleMessage(channelUsername, messageIndex, button, tar
         return;
     }
     
-    // Show loading state
-    originalDiv.classList.add('hidden');
-    translatedDiv.classList.remove('hidden');
-    translatedDiv.innerHTML = '<div class="translation-loading">🔄 Translating...</div>';
+    // Translate
     translateBtn.innerHTML = '🔄';
-    
     try {
         const originalText = messages[messageIndex].text;
-        console.log(`Translating: "${originalText.substring(0, 50)}..."`);
-        
         const translatedText = await translateText(originalText, targetLang);
         
-        const escapedTranslation = escapeHtml(translatedText);
-        translatedDiv.setAttribute(`data-translated-${targetLang}`, escapedTranslation);
-        translatedDiv.innerHTML = escapedTranslation;
+        translatedDiv.setAttribute(`data-translated-${targetLang}`, escapeHtml(translatedText));
+        translatedDiv.innerHTML = escapeHtml(translatedText);
+        originalDiv.classList.add('hidden');
+        translatedDiv.classList.remove('hidden');
         
         const langFlag = targetLang === 'en' ? '🇺🇸' : '🇸🇦';
         translateBtn.innerHTML = langFlag;
         translateBtn.title = 'Show original';
         
-        console.log(`✅ Translation completed: "${translatedText.substring(0, 50)}..."`);
-        
     } catch (error) {
         console.error('Translation error:', error);
-        
-        // Show error and revert
-        translatedDiv.innerHTML = `<div style="color: #ef4444;">❌ Translation failed</div>`;
         translateBtn.innerHTML = '❌';
-        
         setTimeout(() => {
-            originalDiv.classList.remove('hidden');
-            translatedDiv.classList.add('hidden');
             translateBtn.innerHTML = '🌐';
-        }, 3000);
+        }, 2000);
     }
 }
 
@@ -313,8 +291,8 @@ async function translateMessages(messages, targetLang = 'en') {
         try {
             const translated = await translateText(message.text, targetLang);
             translations.push(translated);
-            // Small delay to avoid overwhelming the API
-            await new Promise(resolve => setTimeout(resolve, 200));
+            // Small delay to avoid rate limiting
+            await new Promise(resolve => setTimeout(resolve, 100));
         } catch (error) {
             console.error('Error translating message:', error);
             translations.push(message.text); // Fallback to original
@@ -324,112 +302,21 @@ async function translateMessages(messages, targetLang = 'en') {
     return translations;
 }
 
-// WORKING TRANSLATION FUNCTION using LibreTranslate (free, no CORS issues)
 async function translateText(text, targetLang = 'en') {
-    if (!text || text.trim().length === 0) {
-        return text;
-    }
-    
-    // Limit text length for better performance
-    const maxLength = 500;
-    const textToTranslate = text.length > maxLength ? text.substring(0, maxLength) + '...' : text;
-    
+    // Using Google Translate API through a proxy service
     try {
-        console.log(`🔄 Translating to ${targetLang}: "${textToTranslate.substring(0, 30)}..."`);
-        
-        // Using LibreTranslate API (free and supports CORS)
-        const response = await fetch('https://libretranslate.de/translate', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-                q: textToTranslate,
-                source: 'auto', // Auto-detect source language
-                target: targetLang,
-                format: 'text'
-            })
-        });
-        
-        if (!response.ok) {
-            throw new Error(`Translation API error: ${response.status}`);
-        }
-        
+        const response = await fetch(`https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${targetLang}&dt=t&q=${encodeURIComponent(text)}`);
         const data = await response.json();
         
-        if (data && data.translatedText) {
-            console.log(`✅ Translation successful`);
-            return data.translatedText;
-        } else {
-            throw new Error('Invalid translation response');
+        if (data && data[0] && data[0][0] && data[0][0][0]) {
+            return data[0].map(item => item[0]).join('');
         }
         
+        throw new Error('Translation failed');
     } catch (error) {
         console.error('Translation API error:', error);
-        
-        // Fallback: Simple word replacements for common terms
-        return applyFallbackTranslation(textToTranslate, targetLang);
+        return text; // Return original if translation fails
     }
-}
-
-// Fallback translation for common words/phrases
-function applyFallbackTranslation(text, targetLang) {
-    if (targetLang === 'en') {
-        const hebrewToEnglish = {
-            'שלום': 'hello/peace',
-            'תודה': 'thank you',
-            'בוקר טוב': 'good morning',
-            'לילה טוב': 'good night',
-            'כן': 'yes',
-            'לא': 'no',
-            'מה שלומך': 'how are you',
-            'ביטחון': 'security',
-            'חדשות': 'news',
-            'צהל': 'IDF',
-            'ישראל': 'Israel',
-            'פלסטין': 'Palestine',
-            'עזה': 'Gaza',
-            'חמאס': 'Hamas',
-            'צרפת': 'France',
-            'ארצות הברית': 'United States',
-            'ירושלים': 'Jerusalem',
-            'תל אביב': 'Tel Aviv'
-        };
-        
-        const arabicToEnglish = {
-            'السلام عليكم': 'peace be upon you',
-            'شكرا': 'thank you',
-            'صباح الخير': 'good morning',
-            'تصبح على خير': 'good night',
-            'نعم': 'yes',
-            'لا': 'no',
-            'أمن': 'security',
-            'أخبار': 'news',
-            'إسرائيل': 'Israel',
-            'فلسطين': 'Palestine',
-            'غزة': 'Gaza',
-            'حماس': 'Hamas',
-            'القدس': 'Jerusalem'
-        };
-        
-        let translatedText = text;
-        
-        // Apply Hebrew translations
-        for (const [hebrew, english] of Object.entries(hebrewToEnglish)) {
-            translatedText = translatedText.replace(new RegExp(hebrew, 'gi'), `[${english}]`);
-        }
-        
-        // Apply Arabic translations
-        for (const [arabic, english] of Object.entries(arabicToEnglish)) {
-            translatedText = translatedText.replace(new RegExp(arabic, 'gi'), `[${english}]`);
-        }
-        
-        if (translatedText !== text) {
-            return `[Partial Translation] ${translatedText}`;
-        }
-    }
-    
-    return `[Translation unavailable] ${text}`;
 }
 
 function escapeHtml(text) {
@@ -473,7 +360,7 @@ function startAutoRefresh() {
         } finally {
             isRefreshing = false;
         }
-    }, 8 * 60 * 1000); // Every 8 minutes
+    }, 4 * 60 * 1000); // Every 4 minutes
 }
 
 function stopAutoRefresh() {
@@ -510,7 +397,7 @@ async function refreshAll() {
 
 // Initialize app
 document.addEventListener('DOMContentLoaded', async () => {
-    console.log('🚀 Initializing News Feed...');
+    console.log('🚀 Initializing Israel News Feed...');
     
     // Add loading animation to page
     document.body.classList.add('loading-app');
@@ -560,6 +447,7 @@ document.addEventListener('touchmove', (e) => {
     const pullDistance = currentY - startY;
     
     if (pullDistance > 100 && !isRefreshing) {
+        // Add visual feedback
         document.body.classList.add('pull-to-refresh');
     }
 });
