@@ -156,6 +156,11 @@ body {
     gap: 10px;
 }
 
+/* Channel translation dropdown */
+.channel-translate-dropdown {
+    position: relative;
+}
+
 .translate-channel-btn {
     background: var(--primary);
     color: white;
@@ -181,6 +186,52 @@ body {
 .translate-channel-btn:disabled {
     opacity: 0.6;
     cursor: not-allowed;
+}
+
+.channel-translate-options {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    background: white;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-lg);
+    min-width: 120px;
+    z-index: 10;
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(-10px);
+    transition: all 0.2s ease;
+}
+
+.channel-translate-options.show {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
+}
+
+.channel-lang-option {
+    display: block;
+    width: 100%;
+    padding: 10px 15px;
+    border: none;
+    background: none;
+    text-align: left;
+    cursor: pointer;
+    font-size: 0.9rem;
+    transition: background-color 0.2s ease;
+}
+
+.channel-lang-option:hover {
+    background: var(--bg-gray);
+}
+
+.channel-lang-option:first-child {
+    border-radius: var(--radius) var(--radius) 0 0;
+}
+
+.channel-lang-option:last-child {
+    border-radius: 0 0 var(--radius) var(--radius);
 }
 
 .refresh-info {
@@ -253,6 +304,11 @@ body {
     gap: 10px;
 }
 
+/* Individual message translation dropdown */
+.translate-dropdown {
+    position: relative;
+}
+
 .translate-btn {
     background: transparent;
     border: 2px solid var(--primary);
@@ -274,15 +330,50 @@ body {
     transform: scale(1.1);
 }
 
-.view-link {
-    color: var(--primary);
-    text-decoration: none;
-    font-size: 1.2rem;
-    transition: transform 0.2s ease;
+.translate-options {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    background: white;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-lg);
+    min-width: 80px;
+    z-index: 10;
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(-10px);
+    transition: all 0.2s ease;
 }
 
-.view-link:hover {
-    transform: scale(1.2);
+.translate-options.show {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
+}
+
+.lang-option {
+    display: block;
+    width: 100%;
+    padding: 8px 12px;
+    border: none;
+    background: none;
+    text-align: left;
+    cursor: pointer;
+    font-size: 0.8rem;
+    transition: background-color 0.2s ease;
+}
+
+.lang-option:hover {
+    background: var(--bg-gray);
+}
+
+.lang-option:first-child {
+    border-radius: var(--radius) var(--radius) 0 0;
+}
+
+.lang-option:last-child {
+    border-radius: 0 0 var(--radius) var(--radius);
 }
 
 /* Loading states */
@@ -420,6 +511,11 @@ body {
     .announcement-block {
         padding: 15px;
     }
+    
+    .translate-options {
+        right: auto;
+        left: 0;
+    }
 }
 
 /* Dark mode support */
@@ -439,6 +535,11 @@ body {
     .translated-text {
         background: linear-gradient(45deg, #1e293b, #334155);
     }
+    
+    .channel-translate-options, .translate-options {
+        background: #1f2937;
+        border-color: #374151;
+    }
 }
 
 /* Smooth scrolling */
@@ -447,7 +548,7 @@ html {
 }
 
 /* Touch improvements */
-.translate-btn, .refresh-btn, .translate-channel-btn, .retry-btn {
+.translate-btn, .refresh-btn, .translate-channel-btn, .retry-btn, .lang-option, .channel-lang-option {
     -webkit-tap-highlight-color: transparent;
     touch-action: manipulation;
 }
