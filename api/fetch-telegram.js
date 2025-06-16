@@ -1,5 +1,4 @@
 export default async function handler(request, response) {
-    // Enable CORS for frontend requests
     response.setHeader('Access-Control-Allow-Origin', '*');
     response.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     response.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -9,94 +8,122 @@ export default async function handler(request, response) {
     }
 
     const channelUsername = request.query.channel;
-
     if (!channelUsername) {
         return response.status(400).json({ 
-            error: 'Channel username is required. Use: /api/fetch-telegram?channel=channelname' 
-        });
-    }
-
-    const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-    
-    if (!BOT_TOKEN) {
-        return response.status(500).json({ 
-            error: 'Bot token not configured in Vercel environment variables' 
+            error: 'Channel username is required' 
         });
     }
 
     try {
-        console.log(`Fetching messages for channel: ${channelUsername}`);
+        console.log(`Scraping messages for channel: ${channelUsername}`);
 
-        // First, get the chat ID for the channel
-        const chatResponse = await fetch(
-            `https://api.telegram.org/bot${BOT_TOKEN}/getChat?chat_id=@${channelUsername}`
-        );
-        
-        if (!chatResponse.ok) {
-            const chatError = await chatResponse.json();
-            console.error('Chat error:', chatError);
-            return response.status(400).json({ 
-                error: `Cannot access channel @${channelUsername}. Make sure: 1) Channel username is correct, 2) Bot is added as admin to the channel, 3) Channel is public or bot has access. Details: ${chatError.description}` 
-            });
-        }
-        
-        const chatData = await chatResponse.json();
-        const chatId = chatData.result.id;
-        
-        console.log(`Found chat ID: ${chatId} for @${channelUsername}`);
+        // Fetch the public channel page
+        const channelUrl = `https://t.me/s/${channelUsername}`;
+        const pageResponse = await fetch(channelUrl, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            }
+        });
 
-        // Get recent updates
-        const updatesResponse = await fetch(
-            `https://api.telegram.org/bot${BOT_TOKEN}/getUpdates?limit=100`
-        );
-        
-        if (!updatesResponse.ok) {
-            const updatesError = await updatesResponse.json();
-            return response.status(updatesResponse.status).json({ 
-                error: updatesError.description || 'Failed to fetch updates from Telegram' 
-            });
-        }
-        
-        const updatesData = await updatesResponse.json();
-        
-        // Filter messages from the specific channel
-        const channelMessages = updatesData.result
-            .filter(update => {
-                return update.channel_post && 
-                       update.channel_post.chat.id === chatId &&
-                       (update.channel_post.text || update.channel_post.caption);
-            })
-            .map(update => {
-                const post = update.channel_post;
-                return {
-                    id: post.message_id,
-                    text: post.text || post.caption || '',
-                    date: new Date(post.date * 1000).toLocaleString('en-US', {
-                        year: 'numeric',
-                        month: 'short',
-                        day: 'numeric',
-                        hour: '2-digit',
-                        minute: '2-digit',
-                        timeZoneName: 'short'
-                    }),
-                    timestamp: post.date
-                };
-            })
-            .sort((a, b) => b.timestamp - a.timestamp) // Most recent first
-            .slice(0, 10); // Get latest 10 messages
-
-        console.log(`Found ${channelMessages.length} messages for @${channelUsername}`);
-
-        if (channelMessages.length === 0) {
-            return response.status(200).json([]);
+        if (!pageResponse.ok) {
+            if (pageResponse.status === 404) {
+                return response.status(404).json({ 
+                    error: `Channel @${channelUsername} not found. Make sure the channel username is correct and the channel is public.` 
+                });
+            }
+            throw new Error(`HTTP ${pageResponse.status}: ${pageResponse.statusText}`);
         }
 
-        response.status(200).json(channelMessages);
+        const html = await pageResponse.text();
+        
+        // Parse the HTML to extract messages
+        const messages = parseChannelMessages(html, channelUsername);
+        
+        console.log(`Found ${messages.length} messages for @${channelUsername}`);
+        
+        response.status(200).json(messages);
 
     } catch (error) {
-        console.error('Server error:', error);
+        console.error('Scraping error:', error);
         response.status(500).json({ 
-            error: 'Internal server error. Check server logs for details.' 
+            error: `Failed to fetch channel: ${error.message}`
         });
     }
+}
+
+function parseChannelMessages(html, channelUsername) {
+    const messages = [];
+    
+    try {
+        // Extract message blocks using regex (since we can't use DOM parser in Vercel)
+        const messagePattern = /<div class="tgme_widget_message_wrap[^>]*>(.*?)<\/div>\s*(?=<div class="tgme_widget_message_wrap|$)/gs;
+        const messageMatches = [...html.matchAll(messagePattern)];
+        
+        for (const match of messageMatches.slice(-10)) { // Get last 10 messages
+            const messageHtml = match[1];
+            
+            // Extract message text
+            const textMatch = messageHtml.match(/<div class="tgme_widget_message_text[^>]*(?:dir="auto")?[^>]*>(.*?)<\/div>/s);
+            let messageText = '';
+            
+            if (textMatch) {
+                messageText = cleanHtmlText(textMatch[1]);
+            }
+            
+            // Skip if no text content
+            if (!messageText || messageText.trim().length === 0) {
+                continue;
+            }
+            
+            // Extract date/time
+            const dateMatch = messageHtml.match(/<time[^>]*datetime="([^"]*)"[^>]*>([^<]*)<\/time>/);
+            let dateStr = new Date().toISOString();
+            let displayDate = 'Recently';
+            
+            if (dateMatch) {
+                dateStr = dateMatch[1];
+                displayDate = new Date(dateStr).toLocaleString('en-US', {
+                    month: 'short',
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                });
+            }
+            
+            // Extract message ID for uniqueness
+            const idMatch = messageHtml.match(/data-post="[^/]*\/(\d+)"/);
+            const messageId = idMatch ? idMatch[1] : Date.now().toString();
+            
+            messages.push({
+                id: messageId,
+                text: messageText,
+                date: displayDate,
+                timestamp: new Date(dateStr).getTime(),
+                channel: channelUsername,
+                url: `https://t.me/${channelUsername}/${messageId}`
+            });
+        }
+        
+        // Sort by timestamp (newest first) and limit to 10
+        return messages
+            .sort((a, b) => b.timestamp - a.timestamp)
+            .slice(0, 10);
+            
+    } catch (error) {
+        console.error('Error parsing messages:', error);
+        return [];
+    }
+}
+
+function cleanHtmlText(html) {
+    return html
+        .replace(/<br\s*\/?>/gi, '\n')
+        .replace(/<a[^>]*href="([^"]*)"[^>]*>([^<]*)<\/a>/gi, '$2 ($1)')
+        .replace(/<[^>]*>/g, '')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&amp;/g, '&')
+        .replace(/&quot;/g, '"')
+        .replace(/&#(\d+);/g, (match, dec) => String.fromCharCode(dec))
+        .trim();
 }
