@@ -1,53 +1,104 @@
+// Whitelist of allowed channels - SECURITY IMPROVEMENT
+const ALLOWED_CHANNELS = [
+    'MBSRsi98', 'N12chat', 'newsil2022', 
+    'kodkod_news_il', 'Realtimesecurity1', 'abualiexpress'
+];
+
+// Rate limiting store (in production, use Redis)
+const rateLimitStore = new Map();
+
 export default async function handler(request, response) {
-    response.setHeader('Access-Control-Allow-Origin', '*');
-    response.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    // SECURITY: Restrict CORS to your domain only
+    const allowedOrigins = [
+        'https://your-app-name.vercel.app',
+        'http://localhost:3000' // for development
+    ];
+    
+    const origin = request.headers.origin;
+    if (allowedOrigins.includes(origin)) {
+        response.setHeader('Access-Control-Allow-Origin', origin);
+    }
+    
+    response.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
     response.setHeader('Access-Control-Allow-Headers', 'Content-Type');
     
     if (request.method === 'OPTIONS') {
         return response.status(200).end();
     }
 
+    if (request.method !== 'GET') {
+        return response.status(405).json({ error: 'Method not allowed' });
+    }
+
+    // SECURITY: Rate limiting
+    const clientIP = request.headers['x-forwarded-for'] || request.connection.remoteAddress;
+    const now = Date.now();
+    const rateLimit = rateLimitStore.get(clientIP) || { count: 0, resetTime: now };
+    
+    if (now > rateLimit.resetTime) {
+        rateLimit.count = 0;
+        rateLimit.resetTime = now + 60000; // 1 minute window
+    }
+    
+    if (rateLimit.count >= 10) { // 10 requests per minute
+        return response.status(429).json({ error: 'Rate limit exceeded' });
+    }
+    
+    rateLimit.count++;
+    rateLimitStore.set(clientIP, rateLimit);
+
+    // SECURITY: Input validation
     const channelUsername = request.query.channel;
     if (!channelUsername) {
-        return response.status(400).json({ 
-            error: 'Channel username is required' 
-        });
+        return response.status(400).json({ error: 'Channel required' });
+    }
+
+    // SECURITY: Whitelist validation
+    if (!ALLOWED_CHANNELS.includes(channelUsername)) {
+        return response.status(403).json({ error: 'Channel not allowed' });
+    }
+
+    // SECURITY: Input sanitization
+    const sanitizedChannel = channelUsername.replace(/[^a-zA-Z0-9_]/g, '');
+    if (sanitizedChannel !== channelUsername) {
+        return response.status(400).json({ error: 'Invalid channel format' });
     }
 
     try {
-        console.log(`Scraping messages for channel: ${channelUsername}`);
-
-        // Fetch the public channel page
-        const channelUrl = `https://t.me/s/${channelUsername}`;
+        // SECURITY: Controlled URL construction
+        const channelUrl = `https://t.me/s/${sanitizedChannel}`;
+        
         const pageResponse = await fetch(channelUrl, {
             headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-            }
+                'User-Agent': 'Mozilla/5.0 (compatible; NewsBot/1.0)'
+            },
+            // SECURITY: Timeout to prevent hanging requests
+            signal: AbortSignal.timeout(10000) // 10 second timeout
         });
 
         if (!pageResponse.ok) {
             if (pageResponse.status === 404) {
-                return response.status(404).json({ 
-                    error: `Channel @${channelUsername} not found or is private` 
-                });
+                return response.status(404).json({ error: 'Channel not found' });
             }
-            throw new Error(`HTTP ${pageResponse.status}: ${pageResponse.statusText}`);
+            // SECURITY: Generic error message
+            return response.status(500).json({ error: 'Service unavailable' });
         }
 
         const html = await pageResponse.text();
         
-        // Parse the HTML to extract messages
-        const messages = parseChannelMessages(html, channelUsername);
+        // SECURITY: Limit response size
+        if (html.length > 1000000) { // 1MB limit
+            return response.status(413).json({ error: 'Response too large' });
+        }
         
-        console.log(`Found ${messages.length} messages for @${channelUsername}`);
+        const messages = parseChannelMessages(html, sanitizedChannel);
         
         response.status(200).json(messages);
 
     } catch (error) {
-        console.error('Scraping error:', error);
-        response.status(500).json({ 
-            error: `Failed to fetch channel: ${error.message}`
-        });
+        console.error('Scraping error:', error.message); // Log without details
+        // SECURITY: Generic error response
+        response.status(500).json({ error: 'Service temporarily unavailable' });
     }
 }
 
@@ -55,14 +106,12 @@ function parseChannelMessages(html, channelUsername) {
     const messages = [];
     
     try {
-        // Extract message blocks using regex
         const messagePattern = /<div class="tgme_widget_message_wrap[^>]*>(.*?)<\/div>\s*(?=<div class="tgme_widget_message_wrap|<\/div>\s*<\/div>\s*<\/div>)/gs;
         const messageMatches = [...html.matchAll(messagePattern)];
         
-        for (const match of messageMatches.slice(-15)) { // Get last 15 messages
+        for (const match of messageMatches.slice(-15)) {
             const messageHtml = match[1];
             
-            // Extract message text
             const textMatch = messageHtml.match(/<div class="tgme_widget_message_text[^>]*>(.*?)<\/div>/s);
             let messageText = '';
             
@@ -70,7 +119,6 @@ function parseChannelMessages(html, channelUsername) {
                 messageText = cleanHtmlText(textMatch[1]);
             }
             
-            // If no text, check for media caption
             if (!messageText) {
                 const captionMatch = messageHtml.match(/<div class="tgme_widget_message_caption[^>]*>(.*?)<\/div>/s);
                 if (captionMatch) {
@@ -78,41 +126,46 @@ function parseChannelMessages(html, channelUsername) {
                 }
             }
             
-            // Skip if no text content
             if (!messageText || messageText.trim().length === 0) {
                 continue;
             }
+
+            // SECURITY: Limit message length
+            if (messageText.length > 5000) {
+                messageText = messageText.substring(0, 5000) + '...';
+            }
             
-            // Extract date/time and return ISO string for client-side formatting
             const dateMatch = messageHtml.match(/<time[^>]*datetime="([^"]*)"[^>]*>/);
             let dateStr = new Date().toISOString();
             
             if (dateMatch) {
                 dateStr = dateMatch[1];
+                // SECURITY: Validate date format
+                if (isNaN(new Date(dateStr).getTime())) {
+                    dateStr = new Date().toISOString();
+                }
             }
             
-            // Extract message ID
             const idMatch = messageHtml.match(/data-post="[^/]*\/(\d+)"/);
             const messageId = idMatch ? idMatch[1] : Math.random().toString(36).substr(2, 9);
             
             messages.push({
                 id: messageId,
                 text: messageText,
-                dateISO: dateStr, // Send ISO string for client-side formatting
+                dateISO: dateStr,
                 timestamp: new Date(dateStr).getTime(),
                 channel: channelUsername,
                 url: `https://t.me/${channelUsername}/${messageId}`
             });
         }
         
-        // Sort by timestamp (newest first) and limit to 10
         return messages
-            .filter(msg => msg.text.length > 10) // Filter out very short messages
+            .filter(msg => msg.text.length > 10)
             .sort((a, b) => b.timestamp - a.timestamp)
             .slice(0, 10);
             
     } catch (error) {
-        console.error('Error parsing messages:', error);
+        console.error('Error parsing messages:', error.message);
         return [];
     }
 }
